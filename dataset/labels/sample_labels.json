@@ -1,0 +1,52 @@
+[
+  {
+    "storm_id": "AL092026",
+    "name": "BIPARJOY",
+    "basin": "Arabian Sea",
+    "observations": [
+      {
+        "timestamp": "2026-06-11T12:00:00Z",
+        "latitude": 14.2,
+        "longitude": 68.1,
+        "max_wind_kmh": 185,
+        "min_pressure_hpa": 940,
+        "category": "Extremely Severe Cyclonic Storm",
+        "saffir_simpson": "Cat 4"
+      },
+      {
+        "timestamp": "2026-06-12T00:00:00Z",
+        "latitude": 15.1,
+        "longitude": 67.4,
+        "max_wind_kmh": 196,
+        "min_pressure_hpa": 932,
+        "category": "Extremely Severe Cyclonic Storm",
+        "saffir_simpson": "Cat 4"
+      },
+      {
+        "timestamp": "2026-06-12T12:00:00Z",
+        "latitude": 16.3,
+        "longitude": 66.5,
+        "max_wind_kmh": 210,
+        "min_pressure_hpa": 924,
+        "category": "Super Cyclonic Storm",
+        "saffir_simpson": "Cat 5"
+      }
+    ]
+  },
+  {
+    "storm_id": "BOB052026",
+    "name": "MANDOUS",
+    "basin": "Bay of Bengal",
+    "observations": [
+      {
+        "timestamp": "2026-12-08T06:00:00Z",
+        "latitude": 11.5,
+        "longitude": 83.8,
+        "max_wind_kmh": 110,
+        "min_pressure_hpa": 980,
+        "category": "Severe Cyclonic Storm",
+        "saffir_simpson": "Cat 2"
+      }
+    ]
+  }
+]

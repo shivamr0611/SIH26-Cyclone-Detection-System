@@ -1,0 +1,151 @@
+﻿
+SOFTWARE REQUIREMENTS SPECIFICATION
+AI-Based Tropical Cyclone Detection, Classification and Prediction System
+
+SRS Document
+
+Version 1.0
+Date: 31 August 2026
+
+Prepared for: Academic / College Project
+Document Status: Proposed
+1. Introduction
+1.1 Purpose
+This Software Requirements Specification (SRS) defines the requirements for an AI-based Tropical Cyclone Detection, Classification and Prediction System. The system is intended to process historical and/or incoming satellite observations and related environmental data to detect cyclones, estimate their location and intensity, classify their development stage or category when supported by available labels, and predict future intensity and track.
+1.2 Scope
+The proposed system is a software and AI platform focused on cyclone analysis. Its core workflow is: satellite data acquisition ΓåÆ preprocessing ΓåÆ cyclone detection ΓåÆ classification/location estimation ΓåÆ prediction of intensity and track ΓåÆ visualization through a web dashboard.
+The project is designed as a research/academic prototype. It is not intended to replace official meteorological forecasting or disaster-warning systems.
+1.3 Intended Audience
+Students and project developers
+Faculty/project guides and evaluators
+Researchers interested in AI-based cyclone analysis
+Users who need a visual prototype for cyclone monitoring
+1.4 References / Source Basis
+The requirements in this document are derived from the provided project design material, which proposes a multi-stage AI pipeline using satellite imagery, environmental data, detection/classification models, intensity and track prediction, and a web dashboard. εêÇfileciteεêéturn0file0εêéL1-L42εêü
+2. Overall Description
+2.1 Product Perspective
+The system will operate as a modular AI application. Multiple satellite channels such as visible, infrared and water-vapor imagery can be preprocessed and passed to AI models. Numerical information such as wind, pressure, sea-surface temperature and historical track information can be incorporated into prediction models. The final outputs are presented through an interactive dashboard.
+2.2 Major System Functions
+Acquire or import historical/current satellite observations.
+Preprocess and normalize satellite imagery and numerical data.
+Detect whether a cyclone is present.
+Estimate cyclone location using image-based detection.
+Classify cyclone stage/category when suitable ground-truth labels exist.
+Estimate current intensity from available observations.
+Predict future intensity at selected time horizons.
+Predict future cyclone positions and generate a projected track.
+Combine multiple satellite/environmental data sources using feature fusion.
+Display current and predicted information in a web dashboard.
+Provide a prototype risk indicator based on predicted intensity, track, distance from land and intensification rate.
+2.3 User Classes
+Administrator/Developer: manages datasets, models, configurations and system operation.
+Analyst/Student: runs predictions, views model outputs and evaluates results.
+General Viewer: views cyclone status, predicted intensity and track through the dashboard.
+2.4 Operating Environment
+Python-based AI/ML environment.
+PyTorch or TensorFlow/Keras for deep-learning models.
+scikit-learn for traditional machine-learning models.
+OpenCV, NumPy and Pandas for data processing.
+Ultralytics/YOLO for object detection.
+Django with HTML/CSS/JavaScript, or Streamlit, for the dashboard.
+Leaflet.js or Folium for map visualization.
+3. System Architecture
+The high-level architecture consists of satellite data inputs, preprocessing, an AI cyclone detector, classification and location modules, prediction models, and a web dashboard. The source design explicitly represents visible, infrared and water-vapor satellite images feeding preprocessing and an AI cyclone detector, followed by classification/location and prediction modules. εêÇfileciteεêéturn0file0εêéL5-L40εêü
+Satellite Data
+Γåô
+Data Preprocessing
+Γåô
+AI Cyclone Detector
+Γåô
+Cyclone Detected?
+Γö£ΓöÇΓöÇ No ΓåÆ Stop
+ΓööΓöÇΓöÇ Yes ΓåÆ Classification + Location
+                 Γåô
+          Prediction Model
+        Γö£ΓöÇΓöÇ Intensity
+        Γö£ΓöÇΓöÇ Track
+        ΓööΓöÇΓöÇ Category
+                 Γåô
+            Web Dashboard
+4. Functional Requirements
+5. Non-Functional Requirements
+6. Data Requirements
+6.1 Satellite Data
+The system should support cyclone-related satellite imagery, potentially including visible, infrared and water-vapor channels. The source design also identifies public and research sources such as NOAA, NASA, EUMETSAT, ISRO-accessible datasets and IBTrACS as possible data sources; the exact dataset must be selected before implementation.
+6.2 Ground Truth Labels
+Training data should contain labels appropriate to the task. Example labels include cyclone/no-cyclone, latitude, longitude, wind speed and pressure. The source material emphasizes that the label represents ground truth. εêÇfileciteεêéturn0file0εêéL121-L150εêü
+6.3 Historical Track Data
+For prediction, the dataset should preserve time, latitude, longitude, wind speed, pressure and storm category where available. Historical sequences allow the model to learn future changes from previous observations. εêÇfileciteεêéturn0file0εêéL154-L183εêü
+7. AI/ML Requirements
+7.1 Cyclone Detection Model
+A CNN or transfer-learning architecture such as EfficientNet or ResNet may be used to classify satellite images as cyclone or no cyclone. The source design recommends starting with this binary detection problem before moving to more complex prediction tasks. εêÇfileciteεêéturn0file0εêéL187-L249εêü
+7.2 Location Detection
+An object-detection model such as YOLO may be used to identify a cyclone bounding box. The bounding-box center can then be used as an estimate of the storm center, subject to dataset resolution and georeferencing limitations. εêÇfileciteεêéturn0file0εêéL290-L333εêü
+7.3 Intensity Prediction
+The initial implementation may use Random Forest, XGBoost or regression models with features such as wind speed, pressure, sea-surface temperature, latitude, longitude and temporal changes. A later version may use an LSTM to model the time-series behavior. εêÇfileciteεêéturn0file0εêéL368-L420εêü
+7.4 Track Prediction
+A time-series model such as LSTM may use previous cyclone coordinates to predict future coordinates and generate a projected track. εêÇfileciteεêéturn0file0εêéL424-L502εêü
+7.5 Multi-source Fusion
+An advanced version may extract features independently from visible, infrared and water-vapor imagery and combine those features with wind, pressure, sea-surface temperature and historical track data in a fusion model. εêÇfileciteεêéturn0file0εêéL521-L589εêü
+8. Model Evaluation Requirements
+Classification: accuracy, precision, recall, F1-score and confusion matrix.
+Object detection: precision, recall, mAP and IoU.
+Intensity prediction: MAE and RMSE.
+Track prediction: geographical distance error in kilometres.
+The evaluation must be performed on cyclone events that are separated from training data where the goal is to measure generalization to new storms. The source specifically warns against random image-level splitting when images belong to the same cyclone because this can cause data leakage. εêÇfileciteεêéturn0file0εêéL687-L730εêü
+9. User Interface Requirements
+9.1 Dashboard
+Display the current/selected satellite image.
+Show cyclone detected/not detected status.
+Show detection confidence.
+Show current wind speed and pressure when available.
+Show cyclone category/stage when supported.
+Display current cyclone location.
+Display predicted intensity at configured horizons.
+Display predicted track on an interactive map.
+Display a prototype risk indicator when implemented.
+Clearly distinguish model predictions from official meteorological warnings.
+10. System Constraints and Assumptions
+The accuracy of the system depends heavily on the quality, coverage and labeling of the selected dataset.
+Not all satellite datasets will contain every required variable or channel.
+Cyclone categories must be derived from valid labels/meteorological definitions supported by the selected dataset rather than arbitrary categories.
+The core project does not require Arduino, ESP32, Raspberry Pi or physical sensors.
+The prediction system is a college/research prototype and should not be represented as an operational disaster-warning service.
+The source material explicitly recommends treating the risk component as a research/demo indicator and states that official warnings require validated operational meteorological systems. εêÇfileciteεêéturn0file0εêéL821-L841εêü
+11. Project Development Phases
+12. Minimum Viable Product (MVP)
+The recommended MVP is a satellite-image-based cyclone detector that identifies cyclone/no-cyclone status, estimates or displays current location when available, and presents the result through a simple dashboard. The source material recommends starting with this smaller scope before implementing full intensity and track prediction. εêÇfileciteεêéturn0file0εêéL975-L1011εêü
+13. Advanced Version
+The advanced system can combine multiple satellite sources and environmental data, use feature fusion, predict intensity and track, and provide an interactive GIS dashboard. This corresponds to the advanced project architecture described in the supplied design. εêÇfileciteεêéturn0file0εêéL1013-L1034εêü
+14. Proposed Project Structure
+cyclone-ai/
+Γö£ΓöÇΓöÇ dataset/
+Γöé   Γö£ΓöÇΓöÇ satellite/
+Γöé   Γö£ΓöÇΓöÇ labels/
+Γöé   ΓööΓöÇΓöÇ weather/
+Γö£ΓöÇΓöÇ preprocessing/
+Γö£ΓöÇΓöÇ detection/
+Γö£ΓöÇΓöÇ classification/
+Γö£ΓöÇΓöÇ prediction/
+Γö£ΓöÇΓöÇ models/
+ΓööΓöÇΓöÇ dashboard/
+15. Acceptance Criteria
+The system accepts a valid satellite image/data sample.
+The detection module returns cyclone/no-cyclone with a confidence value.
+The system displays an estimated cyclone location when detection/georeferencing data support it.
+The system can display current intensity and category when corresponding labels/data are available.
+The prediction module produces future intensity and/or track outputs for the configured horizon after the relevant model has been trained.
+The dashboard presents outputs in a readable form, including map-based track visualization when implemented.
+Model evaluation results are calculated on a held-out storm/event test set.
+The system clearly labels predictions as prototype/model outputs rather than official warnings.
+16. Future Enhancements
+Near-real-time satellite data ingestion.
+Additional atmospheric and oceanographic variables.
+Longer forecast horizons after sufficient validation.
+Transformer-based or other advanced temporal models.
+Uncertainty/confidence intervals for intensity and track predictions.
+Automated model retraining with newly available historical storms.
+Cloud deployment and scalable inference.
+More detailed GIS layers and coastal impact visualization.
+17. Conclusion
+This SRS defines a staged AI-based cyclone analysis platform beginning with reliable cyclone detection and progressing toward location estimation, classification, intensity prediction, track prediction, multi-source fusion and dashboard visualization. The architecture is intentionally modular so that a practical academic MVP can be completed first and advanced capabilities can be added without redesigning the entire system.

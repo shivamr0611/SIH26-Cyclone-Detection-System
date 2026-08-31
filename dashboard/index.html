@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CycloneAI – Cyclone Detection &amp; Prediction</title>
+  <meta name="description" content="Simple and fast Tropical Cyclone Detection and Prediction using satellite imagery." />
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div class="app-container">
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="logo">🌀</div>
+    <div>
+      <h1>CycloneAI</h1>
+      <p>Tropical Cyclone Detection &amp; Intensity Prediction System</p>
+    </div>
+  </header>
+
+  <!-- Upload & Ingestion Card -->
+  <section class="card">
+    <div class="card-header">
+      <h2>1. Ingest Satellite Image</h2>
+    </div>
+
+    <!-- Dropzone -->
+    <div class="dropzone" id="upload-zone"
+         ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+      <input type="file" id="file-in" accept="image/*" onchange="onFileChosen(this.files[0])" />
+      <div class="drop-icon">📡</div>
+      <p class="drop-text">Drag &amp; drop satellite image here, or <span>browse</span></p>
+      <span class="drop-hint">Supports satellite imagery (e.g. from IMD or Zoom Earth)</span>
+    </div>
+
+    <img id="sat-preview" alt="Satellite Preview" />
+
+    <!-- Live Portals Shortcuts -->
+    <div class="live-links">
+      <span class="live-links-label">Get live images:</span>
+      <a href="https://mausam.imd.gov.in/responsive/satellite.php" target="_blank" rel="noopener noreferrer" class="link-btn">
+        <span class="dot"></span> IMD Satellite Live ↗
+      </a>
+      <a href="https://zoom.earth/maps/satellite/" target="_blank" rel="noopener noreferrer" class="link-btn">
+        <span class="dot"></span> Zoom Earth Live ↗
+      </a>
+    </div>
+
+    <!-- Loading Bar -->
+    <div class="loader-bar" id="loader"><div class="loader-fill"></div></div>
+
+    <!-- Action Button -->
+    <button class="btn-analyze" id="analyze-btn" onclick="analyze()" disabled>
+      Analyze Image
+    </button>
+  </section>
+
+  <!-- Results Section -->
+  <section class="card results-card" id="results-section" style="display:none;">
+    <div class="card-header">
+      <h2>2. Analysis Results</h2>
+    </div>
+
+    <!-- Status Banner -->
+    <div class="status-box" id="status-box">
+      <div class="status-icon" id="status-icon">🌀</div>
+      <div class="status-info">
+        <div class="status-title" id="status-title">Cyclone Detected</div>
+        <div class="status-desc" id="status-desc">Deep convective cloud vortex identified</div>
+      </div>
+      <div class="confidence-badge" id="conf-badge">94.8% Confidence</div>
+    </div>
+
+    <!-- Key Metrics Grid (Shown when cyclone detected) -->
+    <div class="metrics-grid" id="metrics-grid">
+      <div class="metric-item">
+        <span class="m-label">Category</span>
+        <strong class="m-value" id="m-category" style="color:var(--danger)">Category 4</strong>
+      </div>
+      <div class="metric-item">
+        <span class="m-label">Wind Speed</span>
+        <strong class="m-value"><span id="m-wind">185</span> <small>km/h</small></strong>
+      </div>
+      <div class="metric-item">
+        <span class="m-label">Central Pressure</span>
+        <strong class="m-value"><span id="m-press">940</span> <small>hPa</small></strong>
+      </div>
+      <div class="metric-item">
+        <span class="m-label">Hazard Risk</span>
+        <strong class="m-value" id="m-risk" style="color:var(--danger)">HIGH</strong>
+      </div>
+    </div>
+
+    <!-- Cloud Diagnostics -->
+    <div class="cloud-summary" id="cloud-summary">
+      <div class="cs-item">Cloud Cover: <strong id="cs-cloud">0%</strong></div>
+      <div class="cs-item">Cold Core Mass: <strong id="cs-core">0%</strong></div>
+      <div class="cs-item">Dvorak Rating: <strong id="cs-tnum">T0</strong></div>
+    </div>
+
+    <!-- Forecast Table -->
+    <div class="forecast-wrapper" id="forecast-wrapper">
+      <h3>Future Intensity Forecast</h3>
+      <table class="simple-table">
+        <thead>
+          <tr>
+            <th>Horizon</th>
+            <th>Wind (km/h)</th>
+            <th>Pressure (hPa)</th>
+            <th>Category</th>
+            <th>Trend</th>
+          </tr>
+        </thead>
+        <tbody id="forecast-tbody"></tbody>
+      </table>
+    </div>
+
+  </section>
+
+</div>
+
+<!-- JavaScript Logic -->
+<script src="js/app.js"></script>
+
+</body>
+</html>
