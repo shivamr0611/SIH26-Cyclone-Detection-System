@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  Team <b>Crimson Syndicate</b> · Smart India Hackathon 2026
+  Team <b>Innovators Squad</b> · Smart India Hackathon 2026
 </p>
 
 ---
@@ -341,7 +341,7 @@ Evaluated using **storm-event held-out cross-validation** (no temporal data leak
 
 ---
 
-## 🏆 Team Crimson Syndicate
+## 🏆 Team Innovators Squad
 
 **Smart India Hackathon 2026**
 

@@ -219,29 +219,32 @@ def detect_cyclone(preprocessed_image_b64: str) -> Dict[str, Any]:
         cdo_radius_km = round(float(pseudo_cdo_radius_px * INSAT3D_KM_PER_PIXEL), 2)
 
     # 5. Geographic Ocean / Land Coordinate Resolution
-    # Map pixel coordinates to INSAT-3D India Sector domain (5°N-35°N, 65°E-98°E)
+    # Bounding Box: Left ~ 75.0°E, Right ~ 100.0°E (Δlon=25.0°), Top ~ 25.0°N, Bottom ~ 5.0°N (Δlat=20.0°)
     cx_coord, cy_coord = circulation_center
-    resolved_lat = round(35.0 - (float(cy_coord) / float(max(1, h))) * 30.0, 2)
-    resolved_lon = round(65.0 + (float(cx_coord) / float(max(1, w))) * 33.0, 2)
+    resolved_lat = round(25.0 - (float(cy_coord) / float(max(1, h))) * 20.0, 2)
+    resolved_lon = round(75.0 + (float(cx_coord) / float(max(1, w))) * 25.0, 2)
 
-    # Land/Ocean determination for North Indian Ocean basin
-    if resolved_lat > 23.0 and resolved_lon < 88.0:
-        # Northern India (Delhi, UP, Punjab, Rajasthan, Haryana, Nepal)
+    # Land/Ocean determination for Bay of Bengal / North Indian Ocean domain (75°E-100°E, 5°N-25°N)
+    # India east coastline extends from ~80.5°E in south (Tamil Nadu/Andhra) to ~86.5°E in north (Odisha/WB)
+    if resolved_lat > 20.5 and resolved_lon < 86.5:
+        # Northern / Central mainland India (land)
         is_ocean = False
-    elif 18.0 <= resolved_lat <= 23.0 and 76.5 <= resolved_lon <= 83.5:
-        # Central Deccan plateau inland
+    elif 11.0 <= resolved_lat <= 20.5 and resolved_lon <= 80.5:
+        # Peninsular India interior (land)
         is_ocean = False
-    elif 11.0 <= resolved_lat < 18.0 and 76.0 <= resolved_lon <= 79.0:
-        # Southern interior land
+    elif resolved_lat < 11.0 and resolved_lon < 77.5:
+        # Southern tip landmass
         is_ocean = False
     else:
-        # Bay of Bengal (East), Arabian Sea (West), or equatorial Indian Ocean
+        # Bay of Bengal open ocean (80.5°E - 98.0°E, 5.0°N - 22.0°N) or Arabian Sea
         is_ocean = True
 
     logger.info(
-        "Circulation Center: raw_pixels=(%d, %d), resolved_geo=(%.2f°N, %.2f°E), is_ocean=%s",
+        "Detected Center Pixel: (cx=%d, cy=%d), Image Dimensions: (W=%d, H=%d) -> Resolved Geo: (lat=%.2f°N, lon=%.2f°E), is_ocean=%s",
         cx_coord,
         cy_coord,
+        w,
+        h,
         resolved_lat,
         resolved_lon,
         is_ocean,
