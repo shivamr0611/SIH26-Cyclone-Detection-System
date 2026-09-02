@@ -1,0 +1,56 @@
+[
+  {
+    "file": "OIP.jpg",
+    "status": 200,
+    "detected": true,
+    "confidence": "74.0%",
+    "dvorak": "T4.0",
+    "category": "Severe Cyclonic Storm",
+    "reason": "Cyclone Signature Confirmed"
+  },
+  {
+    "file": "Screenshot 2026-08-31 214041.png",
+    "status": 200,
+    "detected": true,
+    "confidence": "72.0%",
+    "dvorak": "T4.5",
+    "category": "Severe Cyclonic Storm",
+    "reason": "Cyclone Signature Confirmed"
+  },
+  {
+    "file": "Screenshot 2026-08-31 214709.png",
+    "status": 200,
+    "detected": true,
+    "confidence": "65.0%",
+    "dvorak": "T3.5",
+    "category": "Cyclonic Storm",
+    "reason": "Cyclone Signature Confirmed"
+  },
+  {
+    "file": "Screenshot 2026-08-31 214905.png",
+    "status": 200,
+    "detected": true,
+    "confidence": "74.0%",
+    "dvorak": "T4.0",
+    "category": "Severe Cyclonic Storm",
+    "reason": "Cyclone Signature Confirmed"
+  },
+  {
+    "file": "Screenshot 2026-08-31 215730.png",
+    "status": 200,
+    "detected": true,
+    "confidence": "60.0%",
+    "dvorak": "T3.5",
+    "category": "Cyclonic Storm",
+    "reason": "Cyclone Signature Confirmed"
+  },
+  {
+    "file": "Screenshot 2026-08-31 215822.png",
+    "status": 200,
+    "detected": true,
+    "confidence": "75.0%",
+    "dvorak": "T3.5",
+    "category": "Cyclonic Storm",
+    "reason": "Cyclone Signature Confirmed"
+  }
+]
