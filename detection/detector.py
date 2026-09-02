@@ -268,11 +268,15 @@ def detect_cyclone(preprocessed_image_b64: str) -> Dict[str, Any]:
     if cdo_radius_km < 40.0:
         failures.append(f"CDO radius ({cdo_radius_km:.1f} km < 40.0 km threshold)")
 
-    # Hard Gate 5: Composite Gating Rule
-    # High cold mass + weak vortex = random monsoon convection, not cyclone
-    if cloud_coverage_pct > 45.0 and vortex_concentration_score < 0.60 and not has_clear_eye:
+    # Hard Gate 5: Monsoon Convection Discriminator
+    # If cold_core_mass > 45% AND vortex_score < 0.65 AND is_ocean == False -> No Cyclone
+    if cloud_coverage_pct > 45.0 and vortex_concentration_score < 0.65 and not is_ocean:
         failures.append(
-            f"High cold cloud mass ({cloud_coverage_pct:.1f}%) with sub-cyclonic rotational organization ({vortex_concentration_score:.2f} < 0.60) indicates unorganized monsoon convection"
+            f"Monsoon convection signature: high cold cloud mass ({cloud_coverage_pct:.1f}%) over continental land with non-cyclonic rotational organization ({vortex_concentration_score:.2f} < 0.65)"
+        )
+    elif cloud_coverage_pct > 45.0 and vortex_concentration_score < 0.60 and not has_clear_eye:
+        failures.append(
+            f"High cold cloud mass ({cloud_coverage_pct:.1f}%) with sub-cyclonic rotational organization ({vortex_concentration_score:.2f} < 0.60) indicates unorganized convection"
         )
 
     if point_sources_removed > 10 and cold_pixel_count < 100:
