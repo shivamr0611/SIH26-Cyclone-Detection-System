@@ -272,6 +272,44 @@ if FLASK_AVAILABLE and app:
             processed_b64 = pre["processed_image_b64"]
             det = detect_cyclone(processed_b64)
 
+            # Problem 1 Fix: Short-circuit immediately when multi-criteria gate fails
+            if not det["cyclone_detected"]:
+                logger.info("Pipeline short-circuited: No cyclone detected (%s)", det.get("not_detected_reason"))
+                return jsonify({
+                    "status": "success",
+                    "detected": False,
+                    "cyclone_detected": False,
+                    "isCyclone": False,
+                    "confidence": det.get("confidence", 0.15),
+                    "not_detected_reason": det.get("not_detected_reason", "No organized cyclone vortex detected."),
+                    "vortex_concentration_score": det.get("vortex_concentration_score", 0.0),
+                    "cloudCoverage": pre.get("cloud_coverage_pct", 0.0),
+                    "denseCore": pre.get("cold_core_density", 0.0),
+                    "meanBrightness": pre.get("mean_brightness", 0.0),
+                    "category": "None",
+                    "categoryColor": "#10b981",
+                    "windSpeed": 0,
+                    "wind_kt": 0.0,
+                    "pressure": 1012,
+                    "dvorakRating": "T0.0",
+                    "riskLevel": "NONE",
+                    "riskColor": "#10b981",
+                    "hasEye": False,
+                    "eyeCenter": None,
+                    "eyeDiameterKm": None,
+                    "cdoRadiusKm": det.get("cdo_radius_km", 0.0),
+                    "circulationCenter": det.get("circulation_center", [112, 112]),
+                    "bandCount": 0,
+                    "dominantBandAngle": 0.0,
+                    "rotationDirection": "N/A",
+                    "bandingScore": 0.0,
+                    "gradCamB64": "",
+                    "forecast": {},
+                    "forecast_table": [],
+                    "preprocessing": pre,
+                    "detection": det,
+                }), 200
+
             # Stage 3: Band analysis — PASS THE ACTUAL CENTER
             current_stage = "band_analysis"
             center = det.get("eye_center") or det.get("circulation_center") or [112, 112]
@@ -305,57 +343,47 @@ if FLASK_AVAILABLE and app:
             # Update Session Cache for /api/explain
             LAST_ANALYSIS_CACHE["heatmap_b64"] = cnn.get("grad_cam_b64", "")
             LAST_ANALYSIS_CACHE["predicted_class"] = cnn.get("consensus_category", dvorak_result["category"])
-            LAST_ANALYSIS_CACHE["confidence"] = cnn.get("confidence", 0.85)
+            LAST_ANALYSIS_CACHE["confidence"] = det.get("confidence", cnn.get("confidence", 0.85))
             LAST_ANALYSIS_CACHE["timestamp"] = datetime.now(timezone.utc).isoformat()
             LAST_ANALYSIS_CACHE["image_bytes"] = tir_bytes
 
-            is_cyclone = bool(det["cyclone_detected"])
-
             # Format forecast table
             forecast_table = []
-            if is_cyclone:
-                for horizon in ["now", "+12h", "+24h", "+48h", "+72h"]:
-                    if horizon in forecast:
-                        f_item = forecast[horizon]
-                        trend = "up" if "+12h" in horizon or "+24h" in horizon else ("down" if "+48h" in horizon or "+72h" in horizon else "flat")
-                        forecast_table.append({
-                            "horizon": horizon.replace("now", "Now").replace("+", "+").replace("h", " hr"),
-                            "wind": f_item.get("wind_kmh", f_item.get("wind_speed_kmh", 0)),
-                            "pressure": f_item.get("pressure_hpa", 1000),
-                            "category": f_item.get("category", ""),
-                            "trend": trend,
-                        })
+            for horizon in ["now", "+12h", "+24h", "+48h", "+72h"]:
+                if horizon in forecast:
+                    f_item = forecast[horizon]
+                    trend = "up" if "+12h" in horizon or "+24h" in horizon else ("down" if "+48h" in horizon or "+72h" in horizon else "flat")
+                    forecast_table.append({
+                        "horizon": horizon.replace("now", "Now").replace("+", "+").replace("h", " hr"),
+                        "wind": f_item.get("wind_kmh", f_item.get("wind_speed_kmh", 0)),
+                        "pressure": f_item.get("pressure_hpa", 1000),
+                        "category": f_item.get("category", ""),
+                        "trend": trend,
+                    })
 
             # Assemble response
             response_payload = {
                 "status": "success",
-                "preprocessing": pre,
-                "detection": det,
-                "band_analysis": band,
-                "dvorak": dvorak_result,
-                "cnn": cnn,
-                "forecast": forecast if is_cyclone else {},
-                "forecast_table": forecast_table,
-                "cyclone_detected": is_cyclone,
-                "not_detected_reason": det.get("not_detected_reason"),
-                "vortex_concentration_score": det.get("vortex_concentration_score", 0.0),
-                # Compatibility fields for frontend
-                "isCyclone": is_cyclone,
+                "detected": True,
+                "cyclone_detected": True,
+                "isCyclone": True,
                 "confidence": det.get("confidence", cnn.get("confidence", 0.85)),
-                "category": dvorak_result["category"] if is_cyclone else "None",
-                "categoryColor": dvorak_result.get("category_color", "#f97316") if is_cyclone else "#10b981",
-                "windSpeed": dvorak_result.get("wind_speed_kmh", 0) if is_cyclone else 0,
-                "wind_kt": dvorak_result["wind_kt"] if is_cyclone else 0.0,
-                "pressure": dvorak_result["pressure_hpa"] if is_cyclone else 1012,
-                "dvorakRating": dvorak_result.get("t_number", dvorak_result.get("t_number_val", 1.0)) if is_cyclone else "T0.0",
-                "riskLevel": dvorak_result.get("risk_level", "LOW") if is_cyclone else "NONE",
-                "riskColor": dvorak_result.get("risk_color", "#10b981") if is_cyclone else "#10b981",
+                "not_detected_reason": None,
+                "vortex_concentration_score": det.get("vortex_concentration_score", 0.0),
+                "category": dvorak_result["category"],
+                "categoryColor": dvorak_result.get("category_color", "#f97316"),
+                "windSpeed": dvorak_result.get("wind_speed_kmh", 0),
+                "wind_kt": dvorak_result["wind_kt"],
+                "pressure": dvorak_result["pressure_hpa"],
+                "dvorakRating": dvorak_result.get("t_number", dvorak_result.get("t_number_val", 1.0)),
+                "riskLevel": dvorak_result.get("risk_level", "LOW"),
+                "riskColor": dvorak_result.get("risk_color", "#ef4444"),
                 "cloudCoverage": pre["cloud_coverage_pct"],
                 "denseCore": pre["cold_core_density"],
                 "meanBrightness": pre["mean_brightness"],
-                "hasEye": det["has_clear_eye"] if is_cyclone else False,
-                "eyeCenter": det["eye_center"] if is_cyclone else None,
-                "eyeDiameterKm": det["eye_diameter_km"] if is_cyclone else None,
+                "hasEye": det["has_clear_eye"],
+                "eyeCenter": det["eye_center"],
+                "eyeDiameterKm": det["eye_diameter_km"],
                 "cdoRadiusKm": det["cdo_radius_km"],
                 "circulationCenter": det["circulation_center"],
                 "bandCount": band["band_count"],
@@ -363,7 +391,14 @@ if FLASK_AVAILABLE and app:
                 "rotationDirection": band["rotation_direction"],
                 "bandingScore": band["banding_score"],
                 "gradCamB64": cnn.get("grad_cam_b64", ""),
-                "forecast_72h": forecast if is_cyclone else {},
+                "forecast": forecast,
+                "forecast_table": forecast_table,
+                "forecast_72h": forecast,
+                "preprocessing": pre,
+                "detection": det,
+                "band_analysis": band,
+                "dvorak": dvorak_result,
+                "cnn": cnn,
             }
 
             return jsonify(response_payload), 200

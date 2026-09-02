@@ -184,6 +184,12 @@ def preprocess_tir(image_bytes: bytes) -> Dict[str, Any]:
     else:
         _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
+    # Filter isolated point-source light artifacts (< 50 px) before morphology
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(thresh, connectivity=8)
+    for i in range(1, num_labels):
+        if stats[i, cv2.CC_STAT_AREA] < 50:
+            thresh[labels == i] = 0
+
     # 5. Morphological Closing (5x5 structuring element, 3 iterations)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
     closed_mask = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=3)
@@ -191,11 +197,13 @@ def preprocess_tir(image_bytes: bytes) -> Dict[str, Any]:
     # 6. Extract metrics
     cloud_coverage_pct = round(float((np.sum(closed_mask > 0) / closed_mask.size) * 100.0), 2)
 
-    # Cold core density: percentage of pixels in coldest 10th percentile of raw image
-    cold_threshold = np.percentile(gray, 10)
-    cold_core_pixels = np.count_nonzero(gray <= cold_threshold)
-    cold_core_density = round(float((cold_core_pixels / gray.size) * 100.0), 2)
+    # Cold core density: percentage of convective cold pixels (dark cloud tops in TIR)
+    if mean_b >= 50.0:
+        cold_core_pixels = np.count_nonzero((closed_mask > 0) & (gray <= 85))
+    else:
+        cold_core_pixels = np.count_nonzero(closed_mask > 0)
 
+    cold_core_density = round(float((cold_core_pixels / gray.size) * 100.0), 2)
     mean_brightness = round(float(np.mean(gray)), 2)
 
     # 256-bin histogram

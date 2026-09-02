@@ -222,17 +222,17 @@ async function analyze() {
     }
 
     displayResults({
-      isCyclone: data.isCyclone,
+      isCyclone: data.detected === true || data.isCyclone === true,
       notDetectedReason: data.not_detected_reason,
       confidence: (data.confidence * (data.confidence <= 1 ? 100 : 1)).toFixed(1),
-      statusTitle: data.isCyclone ? "Cyclone Detected" : "No Cyclone Detected",
-      statusDescription: data.isCyclone 
-        ? `Vortex identified with ${data.cloudCoverage}% cloud coverage and Dvorak T${data.dvorakRating}.`
-        : (data.not_detected_reason || `No cyclone vortex pattern detected. Cloud coverage: ${data.cloudCoverage}%.`),
+      statusTitle: (data.detected === true || data.isCyclone === true) ? "Cyclone Detected" : "No Cyclone Signature Found",
+      statusDescription: (data.detected === true || data.isCyclone === true)
+        ? `Vortex identified — ${data.cloudCoverage}% cold cloud coverage, Dvorak ${data.dvorakRating}.`
+        : (data.not_detected_reason || `No organized cyclone vortex detected. Cloud coverage: ${data.cloudCoverage}%.`),
       cloudCoverage: data.cloudCoverage,
       denseCore: data.denseCore,
       vortexConcentration: (data.vortex_concentration_score !== undefined) ? Number(data.vortex_concentration_score).toFixed(2) : "0.00",
-      dvorakRating: `T${typeof data.dvorakRating === 'number' ? data.dvorakRating.toFixed(1) : (data.dvorakRating || '0.0')}`,
+      dvorakRating: (data.detected === true || data.isCyclone === true) ? `T${typeof data.dvorakRating === 'number' ? data.dvorakRating.toFixed(1) : (data.dvorakRating || '0.0')}` : "T0.0",
       category: data.category || "None",
       categoryColor: data.categoryColor || "#10b981",
       windSpeed: data.windSpeed || 0,
@@ -292,18 +292,48 @@ function displayResults(data) {
     // Fill Forecast Table
     renderForecastTable(data.forecast);
     forecastWrapper.style.display = "block";
+
+    // Remove any existing no-cyclone reason panel
+    const oldPanel = document.getElementById("no-cyclone-panel");
+    if (oldPanel) oldPanel.remove();
   } else {
     // NO CYCLONE DETECTED
     statusBox.className = "status-box clear";
     statusIcon.textContent = "✅";
     statusTitle.textContent = data.statusTitle;
-    statusDesc.textContent = data.notDetectedReason || data.statusDescription || "Area is clear of cyclone vortex formation.";
-    confBadge.textContent = `${data.confidence}% Clear`;
+    statusDesc.textContent = "";
+    confBadge.textContent = `${data.confidence}% Not Cyclone`;
     confBadge.style.color = "#10b981";
 
     // Hide cyclone numbers & forecast
     metricsGrid.style.display = "none";
     forecastWrapper.style.display = "none";
+
+    // Build detailed reason panel
+    const oldPanel = document.getElementById("no-cyclone-panel");
+    if (oldPanel) oldPanel.remove();
+
+    const reasonLines = (data.notDetectedReason || "No organized cyclone vortex detected.")
+      .split(";")
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    const panel = document.createElement("div");
+    panel.id = "no-cyclone-panel";
+    panel.className = "no-cyclone-panel";
+    panel.innerHTML = `
+      <div class="ncp-title">🔍 Detection Failure Reasons</div>
+      <ul class="ncp-reasons">
+        ${reasonLines.map(r => `<li>${r}</li>`).join("")}
+      </ul>
+      <div class="ncp-scores">
+        <span><strong>Vortex Concentration:</strong> ${data.vortexConcentration} <em>(need &gt; 0.55)</em></span>
+        <span><strong>Cold Core Mass:</strong> ${data.denseCore}% <em>(need &gt; 15.0%)</em></span>
+        <span><strong>Cloud Coverage:</strong> ${data.cloudCoverage}%</span>
+      </div>
+    `;
+    // Insert panel after status box
+    statusBox.insertAdjacentElement("afterend", panel);
   }
 
   // Update cloud diagnostic summary numbers

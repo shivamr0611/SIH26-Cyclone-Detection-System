@@ -395,3 +395,63 @@ body {
 .trend-up   { color: var(--danger); font-weight: 700; }
 .trend-down { color: var(--success); font-weight: 700; }
 .trend-flat { color: var(--text-muted); font-weight: 700; }
+
+/* No Cyclone Reason Panel */
+.no-cyclone-panel {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-top: 12px;
+}
+
+.ncp-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #065f46;
+  margin-bottom: 10px;
+  letter-spacing: -0.01em;
+}
+
+.ncp-reasons {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.ncp-reasons li {
+  font-size: 0.84rem;
+  color: #047857;
+  padding: 6px 10px;
+  background: #dcfce7;
+  border-radius: 6px;
+  line-height: 1.4;
+}
+
+.ncp-reasons li::before {
+  content: "✗ ";
+  font-weight: 700;
+  color: #dc2626;
+}
+
+.ncp-scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ncp-scores span {
+  font-size: 0.82rem;
+  background: #ffffff;
+  border: 1px solid #a7f3d0;
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: var(--text);
+}
+
+.ncp-scores em {
+  color: var(--text-muted);
+  font-style: normal;
+}
