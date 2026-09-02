@@ -252,13 +252,17 @@ if FLASK_AVAILABLE and app:
                     "stage": "input_validation",
                 }), 400
 
-            # Image Validation Stage (BUG 3 Fix)
+            # Stage 0: Image Validation Hard Gate
             current_stage = "image_validation"
             is_valid, validation_err = validate_satellite_image(tir_bytes)
             if not is_valid:
+                logger.warning("Image validation failed: %s", validation_err)
                 return jsonify({
                     "status": "error",
-                    "error": validation_err,
+                    "error": "Image validation failed",
+                    "reason": validation_err,
+                    "reasons": [validation_err] if isinstance(validation_err, str) else validation_err,
+                    "checks_failed": len(validation_err.split(";")) if isinstance(validation_err, str) else 1,
                     "stage": "image_validation",
                 }), 400
 

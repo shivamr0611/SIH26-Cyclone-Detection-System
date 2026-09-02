@@ -30,15 +30,17 @@ if not logger.handlers:
 def validate_satellite_image(image_input: Union[bytes, bytearray, np.ndarray]) -> Tuple[bool, Optional[str]]:
     """
     Validates whether an uploaded image is a legitimate meteorological satellite product
-    (INSAT-3D/3DR, GOES-R, NOAA, NASA Worldview, MOSDAC, EUMETSAT) versus non-meteorological photo.
+    (INSAT-3D/3DR, GOES-R, NOAA, NASA Worldview, MOSDAC, EUMETSAT) versus non-meteorological input
+    (road maps, terrain screenshots, photos, drawings).
 
-    Evaluates 4 signals:
-      1. Saturation distribution: percentage of pixels with s > 100
-      2. Hue diversity: standard deviation of hue channel
-      3. Brightness texture: Laplacian variance for isolated spot detection
-      4. Color channel correlation: mean Pearson correlation of (R,G) and (R,B) channels
+    Evaluates 5 content-based checks:
+      1. Minimum cloud coverage proxy (bright or dark convective cloud top regions >= 8%)
+      2. Brightness variance & edge density (smooth continuous cloud gradients vs sharp map lines)
+      3. Thermal/brightness histogram distribution (continuous dynamic range vs discrete palette)
+      4. Color channel correlation (R/G/B highly correlated in satellite imagery >= 0.80)
+      5. High-frequency horizontal/vertical edge ratio (map grids, labels, text-like lines)
 
-    Rejection rule: Requires at least 3 failing signals simultaneously to reject.
+    Rejection Rule: Rejects if ANY 2 or more checks fail.
     """
     if isinstance(image_input, (bytes, bytearray)):
         if len(image_input) < 32:
@@ -62,53 +64,54 @@ def validate_satellite_image(image_input: Union[bytes, bytearray, np.ndarray]) -
     if h_img < 100 or w_img < 100:
         return False, f"Image resolution ({w_img}x{h_img} px) is below minimum requirement (100x100 px)."
 
-    # 1. Blank / Zero-Variance Image Check
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    std_dev = float(np.std(gray))
-    if std_dev < 2.0:
-        return False, f"Image is blank or completely uniform (std {std_dev:.2f} < 2.0)."
+    reasons: List[str] = []
 
-    # Multi-Signal Analysis
-    img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(img_hsv)
+    # CHECK 1: Minimum cloud coverage
+    # In satellite imagery, cloud tops appear as either bright (VIS/composite > 160) or dark (raw TIR < 70)
+    bright_ratio = float(np.mean(gray > 160))
+    dark_ratio = float(np.mean(gray < 70))
+    cloud_proxy_ratio = max(bright_ratio, dark_ratio)
+    if cloud_proxy_ratio < 0.08:
+        reasons.append(f"Insufficient cloud mass ({cloud_proxy_ratio:.1%}) — no cloud mass detected")
 
-    # Signal 1: Saturation distribution (>50% vivid pixels)
-    high_sat_ratio = float(np.mean(s > 100))
+    # CHECK 2: Brightness variance & edge density
+    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+    laplacian = cv2.Laplacian(blurred, cv2.CV_64F)
+    edge_density = float(np.mean(np.abs(laplacian) > 40))
+    if edge_density > 0.35:
+        reasons.append(f"High edge density ({edge_density:.1%}) — sharp lines suggest map/non-satellite input")
 
-    # Signal 2: Hue diversity — satellite images have narrow hue range, non-satellite has wide spread
-    hue_std = float(np.std(h))
+    # CHECK 3: Thermal histogram range & discrete palette check
+    hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
+    hist_norm = hist / max(1.0, hist.sum())
+    nonzero_bins = int(np.sum(hist_norm > 0.001))
+    if nonzero_bins < 35:
+        reasons.append(f"Narrow brightness histogram ({nonzero_bins} active bins) — discrete color palette suggests non-satellite")
 
-    # Signal 3: Brightness pattern — city lights have sharp isolated spots, satellite clouds are smooth
-    laplacian_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    # CHECK 4: Color channel correlation
+    r, g, b = cv2.split(img_bgr.astype(np.float32))
+    rg_mat = np.corrcoef(r.flatten(), g.flatten())
+    rb_mat = np.corrcoef(r.flatten(), b.flatten())
+    rg = float(rg_mat[0, 1]) if not np.isnan(rg_mat[0, 1]) else 1.0
+    rb = float(rb_mat[0, 1]) if not np.isnan(rb_mat[0, 1]) else 1.0
+    channel_corr = (rg + rb) / 2.0
+    if channel_corr < 0.80:
+        reasons.append(f"Low channel correlation ({channel_corr:.2f}) — RGB decorrelation suggests colored map input")
 
-    # Signal 4: Color channel correlation
-    # Satellite images: R, G, B channels are highly correlated (grey-ish)
-    # Non-satellite: channels decorrelate (city lights, colored objects)
-    b_ch, g_ch, r_ch = cv2.split(img_bgr)
-    rg_mat = np.corrcoef(r_ch.flatten(), g_ch.flatten())
-    rb_mat = np.corrcoef(r_ch.flatten(), b_ch.flatten())
-    rg_corr = float(rg_mat[0, 1]) if not np.isnan(rg_mat[0, 1]) else 1.0
-    rb_corr = float(rb_mat[0, 1]) if not np.isnan(rb_mat[0, 1]) else 1.0
-    channel_correlation = (rg_corr + rb_corr) / 2.0
+    # CHECK 5: High-frequency H/V edges (Map borders, road grids, city labels)
+    sobelx = cv2.Sobel(blurred, cv2.CV_64F, 1, 0, ksize=3)
+    sobely = cv2.Sobel(blurred, cv2.CV_64F, 0, 1, ksize=3)
+    hv_edge_ratio = float((np.mean(np.abs(sobelx) > 30) + np.mean(np.abs(sobely) > 30)) / 2.0)
+    if hv_edge_ratio > 0.35:
+        reasons.append(f"High H/V edge ratio ({hv_edge_ratio:.1%}) — map borders or text detected")
 
-    # Rejection rules — need 3+ signals to reject
-    is_too_colorful = high_sat_ratio > 0.50       # >50% vivid pixels
-    is_hue_diverse = hue_std > 60.0               # wild color variety
-    is_city_lights = laplacian_var > 800.0        # sharp isolated bright spots
-    is_decorrelated = channel_correlation < 0.85  # RGB channels diverge
-
-    rejection_score = int(sum([is_too_colorful, is_hue_diverse, is_city_lights, is_decorrelated]))
-    is_valid = rejection_score < 3
-
+    # Rejection rule: Reject if ANY 2 or more checks fail
+    is_valid = len(reasons) < 2
     if not is_valid:
-        failed_signals = []
-        if is_too_colorful: failed_signals.append(f"high saturation ({high_sat_ratio*100:.1f}% > 50%)")
-        if is_hue_diverse: failed_signals.append(f"broad hue diversity (std {hue_std:.1f} > 60)")
-        if is_city_lights: failed_signals.append(f"high texture complexity (Laplacian var {laplacian_var:.1f} > 800)")
-        if is_decorrelated: failed_signals.append(f"decorrelated RGB channels ({channel_correlation:.2f} < 0.85)")
-        reason = f"Image failed {rejection_score}/4 satellite checks: " + "; ".join(failed_signals)
-        logger.warning("validate_satellite_image REJECTED: %s", reason)
-        return False, reason
+        error_msg = f"Failed {len(reasons)}/5 satellite checks: " + "; ".join(reasons)
+        logger.warning("validate_satellite_image REJECTED: %s", error_msg)
+        return False, error_msg
 
     return True, None
 
