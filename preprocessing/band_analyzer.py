@@ -157,7 +157,7 @@ def analyze_spiral_bands(
     blurred_lp = cv2.GaussianBlur(log_polar, (3, 3), 0)
     edges = cv2.Canny(blurred_lp, threshold1=50, threshold2=150)
 
-    # 4. HoughLines to identify linear spiral trajectories
+    # 4. HoughLines to identify linear spiral trajectories in log-polar space
     lines = cv2.HoughLines(edges, rho=1.0, theta=np.pi / 180.0, threshold=30)
 
     spiral_angles: List[float] = []
@@ -167,11 +167,13 @@ def analyze_spiral_bands(
             angle_deg = float(np.rad2deg(theta) % 180.0)
 
             # 5. Filter by spiral angle range: 20 deg to 70 deg (and complementary 110-160 deg)
-            if 20.0 <= angle_deg <= 70.0:
+            if (20.0 <= angle_deg <= 70.0) or (110.0 <= angle_deg <= 160.0):
                 spiral_angles.append(angle_deg)
 
-    # 6. Compute band statistics
+    # 6. Compute band statistics & confirmation flag
     band_count = len(spiral_angles)
+    spiral_confirmed = bool(band_count >= 1)
+
     if band_count > 0:
         dominant_band_angle_deg = round(float(np.mean(spiral_angles)), 2)
         # Normalized score: 0 to 1 based on band presence (saturation at 10 bands)
@@ -184,8 +186,9 @@ def analyze_spiral_bands(
     rotation_direction = _detect_rotation_direction(gray, (cx, cy))
 
     logger.debug(
-        "Spiral analysis complete: bands=%d, dominant_angle=%.2f deg, rotation=%s, score=%.2f",
+        "Spiral analysis complete: bands=%d, confirmed=%s, dominant_angle=%.2f deg, rotation=%s, score=%.2f",
         band_count,
+        spiral_confirmed,
         dominant_band_angle_deg,
         rotation_direction,
         banding_score,
@@ -193,6 +196,7 @@ def analyze_spiral_bands(
 
     return {
         "band_count": band_count,
+        "spiral_confirmed": spiral_confirmed,
         "dominant_band_angle_deg": dominant_band_angle_deg,
         "rotation_direction": rotation_direction,
         "banding_score": banding_score,

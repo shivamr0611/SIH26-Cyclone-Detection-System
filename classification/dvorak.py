@@ -44,15 +44,21 @@ def compute_t_number(
     if banding_score > 0.6:
         t += 0.5
 
-    if has_clear_eye:
+    eye_detected = bool(has_clear_eye or (eye_diameter_km is not None and float(eye_diameter_km) > 0.0))
+
+    if eye_detected:
         t += 1.0
-        if eye_diameter_km and eye_diameter_km < 20.0:
+        if eye_diameter_km and float(eye_diameter_km) < 20.0:
             t += 0.5
+    else:
+        # Point 5: Hard rule - T >= 3.5 requires either eye_detected == True OR eye_diameter_km > 0.
+        # If no eye is found, cap Dvorak rating at T2.5 (Deep Depression) regardless of cloud metrics.
+        t = min(t, 2.5)
 
     t = min(t, 8.0)
     t = round(t, 1)
 
-    print(f"[Dvorak] CDO={cdo_radius_km:.1f}km, banding={banding_score:.2f}, eye={has_clear_eye} -> T={t}")
+    print(f"[Dvorak] CDO={cdo_radius_km:.1f}km, banding={banding_score:.2f}, eye_detected={eye_detected} -> T={t}")
     return t
 
 

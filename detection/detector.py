@@ -131,7 +131,7 @@ def detect_cyclone(preprocessed_image_b64: str) -> Dict[str, Any]:
     total_pixels = float(gray.size)
     cloud_coverage_pct = round(float((cold_pixel_count / total_pixels) * 100.0), 2)
 
-    # 3. Log-polar spiral energy score (replaces radial symmetry — real cyclones are asymmetric)
+    # 3. Two-Part Vortex Concentration Score (Rotational Coherence + Radial Gradient)
     if cold_pixel_count >= 50:
         y_idx, x_idx = np.where(thresh > 0)
         cx_c = float(np.mean(x_idx))
@@ -139,26 +139,42 @@ def detect_cyclone(preprocessed_image_b64: str) -> Dict[str, Any]:
         circulation_center = [int(round(cx_c)), int(round(cy_c))]
 
         # Log-polar transform centered on cold mass centroid (cv2.warpPolar, OpenCV 4+)
-        # Organized spiral banding → high angular variance per radial band → high score
-        # ponytail: maxRadius covers half image diagonal; 40px output cols is sufficient resolution
         max_radius = float(np.sqrt(h ** 2 + w ** 2) / 2.0)
         log_polar = cv2.warpPolar(
             gray.astype(np.float32),
-            (40, 360),
+            (360, 40),
             (cx_c, cy_c),
             max_radius,
             cv2.WARP_POLAR_LOG + cv2.WARP_FILL_OUTLIERS,
         )
-        # Divide into 8 angular slices, measure std of each, then normalize
-        n_slices = 8
-        slice_h = max(1, log_polar.shape[0] // n_slices)
-        band_stds = [
-            float(np.std(log_polar[i * slice_h:(i + 1) * slice_h, :]))
-            for i in range(n_slices)
-        ]
-        max_std = max(band_stds) + 1e-6
-        # Score = mean normalized std; organized spirals ≈ 0.5–0.9, random cloud ≈ 0.1–0.3
-        vortex_concentration_score = round(float(np.clip(np.mean(band_stds) / max_std, 0.0, 1.0)), 3)
+
+        # 3a. Rotational coherence: Autocorrelation of radial rings across angles
+        ring_coherences = []
+        for r in range(log_polar.shape[0]):
+            ring = log_polar[r, :]
+            ring_std = float(np.std(ring))
+            if ring_std > 2.0:
+                ring_norm = (ring - np.mean(ring)) / ring_std
+                corr = np.correlate(ring_norm, ring_norm, mode="full")
+                mid = len(corr) // 2
+                lag_corr = corr[mid + 15 : mid + 180] / float(len(ring_norm))
+                peak_val = float(np.max(lag_corr)) if len(lag_corr) > 0 else 0.0
+                ring_coherences.append(max(0.0, peak_val))
+            else:
+                ring_coherences.append(0.0)
+
+        rotational_coherence = float(np.mean(ring_coherences)) if ring_coherences else 0.0
+
+        # 3b. Radial gradient: Cold core mass decreases monotonically outward from center
+        radial_profile = np.mean(log_polar, axis=1)
+        diffs = np.diff(radial_profile)
+        neg_diffs = np.count_nonzero(diffs <= 0)
+        radial_gradient_score = float(neg_diffs / len(diffs)) if len(diffs) > 0 else 0.0
+
+        # Combined formula: 0.6 * rotational_coherence + 0.4 * radial_gradient_score
+        vortex_concentration_score = round(
+            float(np.clip(0.6 * rotational_coherence + 0.4 * radial_gradient_score, 0.0, 1.0)), 3
+        )
     else:
         circulation_center = [w // 2, h // 2]
         vortex_concentration_score = 0.0
@@ -202,32 +218,62 @@ def detect_cyclone(preprocessed_image_b64: str) -> Dict[str, Any]:
 
         cdo_radius_km = round(float(pseudo_cdo_radius_px * INSAT3D_KM_PER_PIXEL), 2)
 
-    # ponytail: land check removed — Laplacian ran on the binary preprocessed mask
-    #            (always high-variance at edges), not original image → always fires over ocean.
-    #            No pixel→geo-coord mapping exists; add when lat/lon metadata is available.
-    is_over_land = False
+    # 5. Geographic Ocean / Land Coordinate Resolution
+    # Map pixel coordinates to INSAT-3D India Sector domain (5°N-35°N, 65°E-98°E)
+    cx_coord, cy_coord = circulation_center
+    resolved_lat = round(35.0 - (float(cy_coord) / float(max(1, h))) * 30.0, 2)
+    resolved_lon = round(65.0 + (float(cx_coord) / float(max(1, w))) * 33.0, 2)
+
+    # Land/Ocean determination for North Indian Ocean basin
+    if resolved_lat > 23.0 and resolved_lon < 88.0:
+        # Northern India (Delhi, UP, Punjab, Rajasthan, Haryana, Nepal)
+        is_ocean = False
+    elif 18.0 <= resolved_lat <= 23.0 and 76.5 <= resolved_lon <= 83.5:
+        # Central Deccan plateau inland
+        is_ocean = False
+    elif 11.0 <= resolved_lat < 18.0 and 76.0 <= resolved_lon <= 79.0:
+        # Southern interior land
+        is_ocean = False
+    else:
+        # Bay of Bengal (East), Arabian Sea (West), or equatorial Indian Ocean
+        is_ocean = True
+
+    logger.info(
+        "Circulation Center: raw_pixels=(%d, %d), resolved_geo=(%.2f°N, %.2f°E), is_ocean=%s",
+        cx_coord,
+        cy_coord,
+        resolved_lat,
+        resolved_lon,
+        is_ocean,
+    )
 
     # 6. Multi-Criteria Gate Threshold Enforcement
-    # Hard thresholds:
-    #   - Vortex concentration score >= 0.55
-    #   - Cold core / cloud mass >= 15.0%
-    #   - CDO radius >= 40.0 km
-    #   - Not situated over continental landmass
-    #   - Not dominated solely by point-source light artifacts
     failures = []
 
-    # ponytail: 0.30 passes real asymmetric vortices (Dvorak accepts non-circular structures)
-    #            reserve 0.55 check for high-confidence eye path above
+    # Hard Gate 1: Ocean Requirement (Tropical cyclones cannot form over continental land)
+    if not is_ocean:
+        failures.append(
+            f"Circulation center is situated over continental landmass (lat: {resolved_lat:.1f}°N, lon: {resolved_lon:.1f}°E) rather than ocean waters required for tropical cyclogenesis"
+        )
+
+    # Hard Gate 2: Vortex Concentration Score (threshold 0.30)
     if vortex_concentration_score < 0.30:
         failures.append(f"Vortex concentration score ({vortex_concentration_score:.2f} < 0.30 threshold)")
 
+    # Hard Gate 3: Minimum Cold Convective Cloud Coverage (threshold 15.0%)
     if cloud_coverage_pct < 15.0:
         failures.append(f"Cold core cloud coverage ({cloud_coverage_pct:.1f}% < 15.0% threshold)")
 
+    # Hard Gate 4: Minimum Central Dense Overcast (CDO) Size (threshold 40.0 km)
     if cdo_radius_km < 40.0:
         failures.append(f"CDO radius ({cdo_radius_km:.1f} km < 40.0 km threshold)")
 
-    # is_over_land always False until geo-coordinates are available (see ponytail comment above)
+    # Hard Gate 5: Composite Gating Rule
+    # High cold mass + weak vortex = random monsoon convection, not cyclone
+    if cloud_coverage_pct > 45.0 and vortex_concentration_score < 0.60 and not has_clear_eye:
+        failures.append(
+            f"High cold cloud mass ({cloud_coverage_pct:.1f}%) with sub-cyclonic rotational organization ({vortex_concentration_score:.2f} < 0.60) indicates unorganized monsoon convection"
+        )
 
     if point_sources_removed > 10 and cold_pixel_count < 100:
         failures.append("Point-source light artifacts detected without organized convective cloud mass")

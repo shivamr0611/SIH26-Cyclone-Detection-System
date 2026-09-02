@@ -126,14 +126,14 @@ function getImdScale(windKmh) {
 
 function calculateCycloneMetrics(cloudPercent, corePercent) {
   // False positive gate: insufficient cloud cover or core
-  if (cloudPercent < 5.0 || corePercent < 1.0) {
+  if (cloudPercent < 15.0 || corePercent < 5.0) {
     const clearConfidence = Math.min(99.2, (98.0 - cloudPercent * 0.5)).toFixed(1);
     return {
       isCyclone: false,
       confidence: clearConfidence,
-      statusTitle: "No Cyclone Detected",
-      statusDescription: `Insufficient convective cloud coverage (${cloudPercent}% < 5.0% threshold).`,
-      notDetectedReason: `Insufficient convective cloud coverage (${cloudPercent}% < 5.0% threshold).`,
+      statusTitle: "No Cyclone Signature Found",
+      statusDescription: `Insufficient convective cloud coverage (${cloudPercent}% < 15.0% threshold).`,
+      notDetectedReason: `Insufficient convective cloud coverage (${cloudPercent}% < 15.0% threshold); Cold core density (${corePercent}% < 5.0% threshold).`,
       cloudCoverage: cloudPercent,
       denseCore: corePercent,
       vortexConcentration: "0.00",
@@ -148,11 +148,13 @@ function calculateCycloneMetrics(cloudPercent, corePercent) {
     };
   }
 
-  // Cyclone Estimation (IMD Scale & Dvorak)
-  const tNumber = Math.min(8.0, Math.max(1.0, 1.0 + (cloudPercent * 0.04) + (corePercent * 0.10)));
+  // Cyclone Estimation (IMD Scale & Dvorak - capped at T2.5 without confirmed eye)
+  const rawTNumber = 1.0 + (cloudPercent * 0.03) + (corePercent * 0.05);
+  // Cap at T2.5 for satellite analysis without explicit eye confirmation
+  const tNumber = Math.min(2.5, Math.max(1.0, rawTNumber));
   const windSpeed = Math.round(30 + Math.pow(tNumber, 2.1) * 3.5);
   const pressure = Math.round(1012 - (windSpeed * 0.45));
-  const confidence = Math.min(98.8, Math.max(68.0, 55.0 + cloudPercent * 0.35 + corePercent * 0.3)).toFixed(1);
+  const confidence = Math.min(95.0, Math.max(60.0, 50.0 + cloudPercent * 0.25 + corePercent * 0.2)).toFixed(1);
   const imd = getImdScale(windSpeed);
 
   // Future Forecast Horizons
