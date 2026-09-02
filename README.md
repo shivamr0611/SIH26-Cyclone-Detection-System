@@ -89,10 +89,8 @@ Double-click on **`dashboard/index.html`** or open it directly in any web browse
 
 3. **View Results**:
    - **No Cyclone**: When cloud cover is low ($< 16\%$), it confirms calm/clear skies with high confidence.
-   - **Cyclone Detected**: When a vortex is present, it calculates:
+   - **Cyclone Detected**: When a vortex is present, it displays:
      - **Confidence %**
      - **Cyclone Category** (Depression, Cat 1 to Cat 5)
-     - **Estimated Wind Speed** (km/h)
-     - **Central Pressure** (hPa)
      - **Hazard Risk Level** (Low, Moderate, High)
-     - **Future Intensity Forecast Table** (Now, +12h, +24h, +48h, +72h)
+     - **Cloud Coverage %**

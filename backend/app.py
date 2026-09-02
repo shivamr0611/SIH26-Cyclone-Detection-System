@@ -22,7 +22,6 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from preprocessing.preprocessor import SatellitePreprocessor
 from detection.detector import CycloneDetector
 from classification.classifier import CycloneClassifier
-from prediction.intensity_predictor import IntensityPredictor
 
 # Initialize Flask app to serve the frontend folder
 DASHBOARD_FOLDER = PROJECT_ROOT / "dashboard"
@@ -32,7 +31,6 @@ app = Flask(__name__, static_folder=str(DASHBOARD_FOLDER), static_url_path="")
 preprocessor = SatellitePreprocessor()
 detector = CycloneDetector()
 classifier = CycloneClassifier()
-predictor = IntensityPredictor()
 
 
 @app.route("/")
@@ -56,11 +54,8 @@ def predict_cyclone():
         # 2. Detect: Determine if cyclone exists and calculate confidence
         det_data = detector.detect(prep_data)
 
-        # 3. Classify: Compute category, wind speed, pressure, and risk
+        # 3. Classify: Compute category and risk
         class_data = classifier.classify(det_data)
-
-        # 4. Predict: Compute future intensity forecast horizons
-        forecast_data = predictor.predict(class_data)
 
         return jsonify({
             "status": "success",
@@ -69,15 +64,10 @@ def predict_cyclone():
             "statusTitle": det_data["status_text"],
             "statusDescription": det_data["message"],
             "cloudCoverage": prep_data["cloud_coverage_percent"],
-            "denseCore": prep_data["dense_core_percent"],
-            "dvorakRating": class_data.get("dvorak_t_number", "T0.5"),
             "category": class_data["category"],
             "categoryColor": class_data["category_color"],
-            "windSpeed": class_data["wind_speed_kmh"],
-            "pressure": class_data["pressure_hpa"],
             "riskLevel": class_data["risk_level"],
-            "riskColor": class_data["risk_color"],
-            "forecast": forecast_data
+            "riskColor": class_data["risk_color"]
         })
 
     except Exception as e:

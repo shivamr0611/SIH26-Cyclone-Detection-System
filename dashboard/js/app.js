@@ -123,87 +123,62 @@ function calculateCycloneMetrics(cloudPercent, corePercent) {
       statusTitle: "No Cyclone Detected",
       statusDescription: `Clear area: Cloud coverage is ${cloudPercent}% (insufficient for a cyclone vortex).`,
       cloudCoverage: cloudPercent,
-      denseCore: corePercent,
-      dvorakRating: "T0.5",
       category: "None",
       categoryColor: "#10b981",
-      windSpeed: 0,
-      pressure: 1013,
       riskLevel: "NONE",
-      riskColor: "#10b981",
-      forecast: []
+      riskColor: "#10b981"
     };
   }
 
-  // CASE B: Cyclone Detected (Thick clouds & cold core present)
-  // 1. Calculate Dvorak T-Number (standard hurricane measurement from T1.5 to T7.0)
+  // CASE B: Cyclone Detected (Thick clouds present)
   const tNumber = Math.min(7.2, Math.max(1.5, 1.0 + (cloudPercent * 0.05) + (corePercent * 0.12)));
+  const windEst = Math.round(30 + Math.pow(tNumber, 2.1) * 3.5);
 
-  // 2. Estimate Wind Speed (km/h) from T-Number
-  const windSpeed = Math.round(30 + Math.pow(tNumber, 2.1) * 3.5);
-
-  // 3. Estimate Central Pressure (hPa) - Higher wind means lower central pressure
-  const pressure = Math.round(1013 - (windSpeed * 0.45));
-
-  // 4. Calculate Confidence (e.g. 70% to 98%)
+  // Calculate Confidence (e.g. 70% to 98%)
   const confidence = Math.min(98.8, Math.max(68.0, 60.0 + cloudPercent * 0.4 + corePercent * 0.3)).toFixed(1);
 
-  // 5. Determine Cyclone Category based on Wind Speed
+  // Determine Cyclone Category
   let category = "Category 1";
   let categoryColor = "#eab308";
 
-  if (windSpeed >= 215) {
+  if (windEst >= 215) {
     category = "Category 5";
     categoryColor = "#ec4899";
-  } else if (windSpeed >= 165) {
+  } else if (windEst >= 165) {
     category = "Category 4";
     categoryColor = "#ef4444";
-  } else if (windSpeed >= 130) {
+  } else if (windEst >= 130) {
     category = "Category 3";
     categoryColor = "#f97316";
-  } else if (windSpeed >= 90) {
+  } else if (windEst >= 90) {
     category = "Category 2";
     categoryColor = "#f59e0b";
-  } else if (windSpeed < 62) {
+  } else if (windEst < 62) {
     category = "Depression";
     categoryColor = "#3b82f6";
   }
 
-  // 6. Hazard Risk Level
+  // Hazard Risk Level
   let riskLevel = "LOW";
   let riskColor = "#10b981";
-  if (windSpeed >= 160) {
+  if (windEst >= 160) {
     riskLevel = "HIGH";
     riskColor = "#ef4444";
-  } else if (windSpeed >= 90) {
+  } else if (windEst >= 90) {
     riskLevel = "MODERATE";
     riskColor = "#f59e0b";
   }
-
-  // 7. Future Forecast Horizons (+12h, +24h, +48h, +72h)
-  const forecast = [
-    { horizon: "Now",    wind: windSpeed,                  pressure: pressure,      category: category, trend: "flat" },
-    { horizon: "+12 hr", wind: Math.round(windSpeed * 1.08), pressure: pressure - 6,  category: category, trend: "up" },
-    { horizon: "+24 hr", wind: Math.round(windSpeed * 1.14), pressure: pressure - 12, category: category, trend: "up" },
-    { horizon: "+48 hr", wind: Math.round(windSpeed * 1.02), pressure: pressure - 3,  category: category, trend: "down" },
-    { horizon: "+72 hr", wind: Math.round(windSpeed * 0.80), pressure: pressure + 15, category: "Weakening", trend: "down" }
-  ];
 
   return {
     isCyclone: true,
     confidence: confidence,
     statusTitle: "Cyclone Detected",
-    statusDescription: `Vortex identified with ${cloudPercent}% cloud density and cold core mass.`,
+    statusDescription: `Vortex identified with ${cloudPercent}% cloud density.`,
     cloudCoverage: cloudPercent,
-    denseCore: corePercent,
-    dvorakRating: `T${tNumber.toFixed(1)}`,
     category: category,
     categoryColor: categoryColor,
-    windSpeed: windSpeed,
-    pressure: pressure,
     riskLevel: riskLevel,
-    riskColor: riskColor,
-    forecast: forecast
+    riskColor: riskColor
   };
 }
 
@@ -254,7 +229,6 @@ function displayResults(data) {
   const statusDesc = document.getElementById("status-desc");
   const confBadge = document.getElementById("conf-badge");
   const metricsGrid = document.getElementById("metrics-grid");
-  const forecastWrapper = document.getElementById("forecast-wrapper");
 
   if (data.isCyclone) {
     // CYCLONE DETECTED: Red banner & display metrics
@@ -269,14 +243,8 @@ function displayResults(data) {
     metricsGrid.style.display = "grid";
     document.getElementById("m-category").textContent = data.category;
     document.getElementById("m-category").style.color = data.categoryColor;
-    document.getElementById("m-wind").textContent = data.windSpeed;
-    document.getElementById("m-press").textContent = data.pressure;
     document.getElementById("m-risk").textContent = data.riskLevel;
     document.getElementById("m-risk").style.color = data.riskColor;
-
-    // Fill Forecast Table
-    renderForecastTable(data.forecast);
-    forecastWrapper.style.display = "block";
   } else {
     // NO CYCLONE: Green banner
     statusBox.className = "status-box clear";
@@ -286,47 +254,13 @@ function displayResults(data) {
     confBadge.textContent = `${data.confidence}% Clear`;
     confBadge.style.color = "#10b981";
 
-    // Hide cyclone numbers & forecast
+    // Hide cyclone numbers
     metricsGrid.style.display = "none";
-    forecastWrapper.style.display = "none";
   }
 
-  // Update cloud diagnostic summary numbers
+  // Update cloud diagnostic summary
   document.getElementById("cs-cloud").textContent = `${data.cloudCoverage}%`;
-  document.getElementById("cs-core").textContent = `${data.denseCore}%`;
-  document.getElementById("cs-tnum").textContent = data.dvorakRating;
 
   // Make results visible
   resultsSection.style.display = "block";
-}
-
-// ------------------------------------------------------------------------------
-// 7. Render Forecast Table Rows
-// ------------------------------------------------------------------------------
-function renderForecastTable(rows) {
-  const tbody = document.getElementById("forecast-tbody");
-  tbody.innerHTML = "";
-
-  rows.forEach(item => {
-    let arrow = "→";
-    let trendClass = "trend-flat";
-
-    if (item.trend === "up") {
-      arrow = "↑";
-      trendClass = "trend-up";
-    } else if (item.trend === "down") {
-      arrow = "↓";
-      trendClass = "trend-down";
-    }
-
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td><strong>${item.horizon}</strong></td>
-      <td>${item.wind}</td>
-      <td>${item.pressure}</td>
-      <td>${item.category}</td>
-      <td class="${trendClass}">${arrow}</td>
-    `;
-    tbody.appendChild(row);
-  });
 }
