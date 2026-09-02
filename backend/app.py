@@ -244,6 +244,7 @@ if FLASK_AVAILABLE and app:
             response_payload = {
                 "status": "success",
                 "isCyclone": detection_res["cyclone_detected"],
+                "cyclone_detected": detection_res["cyclone_detected"],
                 "confidence": classification_res["confidence"],
                 "category": classification_res["consensus_category"],
                 "categoryColor": classification_res["category_color"],
@@ -251,6 +252,7 @@ if FLASK_AVAILABLE and app:
                 "wind_kt": classification_res["wind_kt"],
                 "pressure": classification_res["pressure_hpa"],
                 "dvorakRating": classification_res["dvorak_t_number"],
+                "dvorak": classification_res["dvorak"],
                 "riskLevel": classification_res["risk_level"],
                 "riskColor": classification_res["risk_color"],
                 "cloudCoverage": tir_prep["cloud_coverage_pct"],
@@ -273,6 +275,7 @@ if FLASK_AVAILABLE and app:
                     {"horizon": "+48 hr", "wind": forecast_res["+48h"]["wind_speed_kmh"], "pressure": forecast_res["+48h"]["pressure_hpa"], "category": forecast_res["+48h"]["category"], "trend": "down"},
                     {"horizon": "+72 hr", "wind": forecast_res["+72h"]["wind_speed_kmh"], "pressure": forecast_res["+72h"]["pressure_hpa"], "category": forecast_res["+72h"]["category"], "trend": "down"},
                 ],
+                "forecast_72h": forecast_res,
                 "forecast_details": forecast_res,
                 "dvorak_breakdown": classification_res["dvorak"],
                 "cnn_probabilities": classification_res["cnn"].get("class_probabilities", {}),

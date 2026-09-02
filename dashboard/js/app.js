@@ -210,7 +210,7 @@ function calculateCycloneMetrics(cloudPercent, corePercent) {
 // ------------------------------------------------------------------------------
 // 5. Main Analyze Button Click Handler
 // ------------------------------------------------------------------------------
-function analyze() {
+async function analyze() {
   if (!hasImage) return;
 
   const analyzeBtn = document.getElementById("analyze-btn");
@@ -223,24 +223,49 @@ function analyze() {
   loader.style.display = "block";
   resultsSection.style.display = "none";
 
-  // Simulate short processing time for smooth user experience
-  setTimeout(() => {
-    const previewImage = document.getElementById("sat-preview");
+  try {
+    // Attempt real backend API call
+    const res = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tir: imageBase64 })
+    });
 
-    // Step 1: Read pixel cloud data
-    const features = analyzeImagePixels(previewImage);
-
-    // Step 2: Compute cyclone metrics
-    const results = calculateCycloneMetrics(features.cloudPercent, features.corePercent);
-
-    // Step 3: Render on screen
-    displayResults(results);
-
-    // Reset button
+    if (res.ok) {
+      const data = await res.json();
+      displayResults({
+        isCyclone: data.isCyclone,
+        confidence: (data.confidence * (data.confidence <= 1 ? 100 : 1)).toFixed(1),
+        statusTitle: data.isCyclone ? "Cyclone Detected" : "No Cyclone Detected",
+        statusDescription: data.isCyclone 
+          ? `Vortex identified with ${data.cloudCoverage}% cloud coverage and Dvorak T${data.dvorakRating}.`
+          : `Clear area: Cloud coverage is ${data.cloudCoverage}%.`,
+        cloudCoverage: data.cloudCoverage,
+        denseCore: data.denseCore,
+        dvorakRating: `T${typeof data.dvorakRating === 'number' ? data.dvorakRating.toFixed(1) : data.dvorakRating}`,
+        category: data.category,
+        categoryColor: data.categoryColor || "#f97316",
+        windSpeed: data.windSpeed,
+        pressure: data.pressure,
+        riskLevel: data.riskLevel,
+        riskColor: data.riskColor || "#ef4444",
+        forecast: data.forecast || []
+      });
+      return;
+    }
+  } catch (err) {
+    console.warn("Backend API not reachable; using client-side calculation:", err);
+  } finally {
     loader.style.display = "none";
     analyzeBtn.disabled = false;
     analyzeBtn.textContent = "Analyze Image";
-  }, 400);
+  }
+
+  // Fallback: Client-side calculation
+  const previewImage = document.getElementById("sat-preview");
+  const features = analyzeImagePixels(previewImage);
+  const results = calculateCycloneMetrics(features.cloudPercent, features.corePercent);
+  displayResults(results);
 }
 
 // ------------------------------------------------------------------------------
