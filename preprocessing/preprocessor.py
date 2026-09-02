@@ -27,96 +27,88 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 
-def validate_satellite_image(image_bytes: bytes) -> Tuple[bool, Optional[str]]:
+def validate_satellite_image(image_input: Union[bytes, bytearray, np.ndarray]) -> Tuple[bool, Optional[str]]:
     """
-    Validates whether the uploaded image is plausibly a meteorological satellite image
-    (INSAT-3D/3DR, GOES-R, NOAA, Meteosat, NASA Worldview).
+    Validates whether an uploaded image is a legitimate meteorological satellite product
+    (INSAT-3D/3DR, GOES-R, NOAA, NASA Worldview, MOSDAC, EUMETSAT) versus non-meteorological photo.
 
-    Permits:
-      - Grayscale and single-channel TIR/WV/VIS
-      - Satellite images with colored overlay borders, lat/lon grids, and coastline markers
-      - False-color enhanced IR composites
-      - Nighttime Day-Night band (VIIRS/DNB) satellite scans
+    Evaluates 4 signals:
+      1. Saturation distribution: percentage of pixels with s > 100
+      2. Hue diversity: standard deviation of hue channel
+      3. Brightness texture: Laplacian variance for isolated spot detection
+      4. Color channel correlation: mean Pearson correlation of (R,G) and (R,B) channels
 
-    Rejects (via multi-signal score):
-      - Natural daylight photographs (people, landscapes, rooms, objects)
-      - Complex high-detail photographic scenes
-      - Screenshots of colorful street/road maps
-      - Blank or completely uniform images
-      - Images smaller than 100x100 pixels
-
-    Returns:
-        (is_valid: bool, error_message: Optional[str])
+    Rejection rule: Requires at least 3 failing signals simultaneously to reject.
     """
-    if not image_bytes or len(image_bytes) < 32:
-        return False, "Uploaded image payload is empty or corrupted."
+    if isinstance(image_input, (bytes, bytearray)):
+        if len(image_input) < 32:
+            return False, "Uploaded image payload is empty or corrupted."
+        np_buffer = np.frombuffer(image_input, dtype=np.uint8)
+        img_bgr = cv2.imdecode(np_buffer, cv2.IMREAD_COLOR)
+    elif isinstance(image_input, np.ndarray):
+        if image_input.ndim == 2:
+            img_bgr = cv2.cvtColor(image_input, cv2.COLOR_GRAY2BGR)
+        elif image_input.shape[2] == 4:
+            img_bgr = cv2.cvtColor(image_input, cv2.COLOR_BGRA2BGR)
+        else:
+            img_bgr = image_input
+    else:
+        return False, "Invalid image input type."
 
-    np_buffer = np.frombuffer(image_bytes, dtype=np.uint8)
-    image = cv2.imdecode(np_buffer, cv2.IMREAD_UNCHANGED)
-
-    if image is None:
+    if img_bgr is None:
         return False, "Failed to decode image. Please upload a valid PNG, JPEG, or GeoTIFF file."
 
-    # 1. Minimum Resolution Check (Hard Gate)
-    h, w = image.shape[:2]
-    if h < 100 or w < 100:
-        return False, (
-            f"Image resolution ({w}x{h} px) is below minimum requirement (100x100 px). "
-            "Satellite meteorological analysis requires at least 100x100 pixels."
-        )
+    h_img, w_img = img_bgr.shape[:2]
+    if h_img < 100 or w_img < 100:
+        return False, f"Image resolution ({w_img}x{h_img} px) is below minimum requirement (100x100 px)."
 
-    # Convert to grayscale for structural analysis
-    gray = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2GRAY) if (image.ndim == 3 and image.shape[2] >= 3) else (image if image.ndim == 2 else image[:, :, 0])
-
-    # 2. Blank / Zero-Variance Image Check (Hard Gate)
+    # 1. Blank / Zero-Variance Image Check
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     std_dev = float(np.std(gray))
     if std_dev < 2.0:
-        return False, (
-            f"Image is blank or completely uniform (standard deviation {std_dev:.2f} < 2.0). "
-            "Satellite imagery must contain discernible cloud or oceanic surface features."
-        )
+        return False, f"Image is blank or completely uniform (std {std_dev:.2f} < 2.0)."
 
-    # 3. High-Frequency Noise / Corrupted Array Check (Hard Gate)
-    diff_h = float(np.mean(np.abs(gray[1:, :].astype(np.float32) - gray[:-1, :].astype(np.float32))))
-    diff_w = float(np.mean(np.abs(gray[:, 1:].astype(np.float32) - gray[:, :-1].astype(np.float32))))
-    if diff_h > 55.0 and diff_w > 55.0:
-        return False, (
-            f"Image exhibits extreme high-frequency pixel variation typical of unstructured random noise "
-            f"or corrupted sensor grain (measured gradient: {diff_h:.1f} > 55.0 threshold)."
-        )
+    # Multi-Signal Analysis
+    img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(img_hsv)
 
-    # 4. Multi-Signal Score for Non-Satellite Imagery
-    flags = []
+    # Signal 1: Saturation distribution (>50% vivid pixels)
+    high_sat_ratio = float(np.mean(s > 100))
 
-    # Signal A: Broad Color Saturation
-    high_sat_pct = 0.0
-    if image.ndim == 3 and image.shape[2] >= 3:
-        hsv = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2HSV)
-        sat = hsv[:, :, 1]
-        high_sat_pct = float(np.mean(sat > 60) * 100.0)
-        if high_sat_pct > 40.0:
-            flags.append(f"broad color saturation ({high_sat_pct:.1f}% of pixels > 40.0% threshold)")
+    # Signal 2: Hue diversity — satellite images have narrow hue range, non-satellite has wide spread
+    hue_std = float(np.std(h))
 
-    # Signal B: Background Darkness / Oceanic Baseline
-    dark_pct = float(np.mean(gray < 128) * 100.0)
-    if dark_pct < 20.0:
-        flags.append(f"insufficient dark background / oceanic baseline ({dark_pct:.1f}% < 20.0% threshold)")
-
-    # Signal C: Photographic Scene Texture Complexity
+    # Signal 3: Brightness pattern — city lights have sharp isolated spots, satellite clouds are smooth
     laplacian_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-    edges = cv2.Canny(gray, 80, 180)
-    edge_density = float(np.mean(edges > 0) * 100.0)
-    if laplacian_var > 900.0 and edge_density > 25.0:
-        flags.append(f"excessive scene texture complexity (Laplacian variance {laplacian_var:.1f}, edge density {edge_density:.1f}%)")
 
-    # Reject only when multiple signals strongly indicate non-satellite source
-    if len(flags) >= 2 or high_sat_pct > 65.0:
-        reason_list = "; ".join(flags)
-        return False, (
-            f"Uploaded image does not appear to be a meteorological satellite image ({reason_list}). "
-            "Accepted inputs: Single-channel or overlay-annotated Thermal Infrared (TIR), Water Vapor (WV), "
-            "Visible (VIS), or false-color satellite scans from MOSDAC (ISRO), NOAA Worldview, NASA Worldview, or EUMETSAT."
-        )
+    # Signal 4: Color channel correlation
+    # Satellite images: R, G, B channels are highly correlated (grey-ish)
+    # Non-satellite: channels decorrelate (city lights, colored objects)
+    b_ch, g_ch, r_ch = cv2.split(img_bgr)
+    rg_mat = np.corrcoef(r_ch.flatten(), g_ch.flatten())
+    rb_mat = np.corrcoef(r_ch.flatten(), b_ch.flatten())
+    rg_corr = float(rg_mat[0, 1]) if not np.isnan(rg_mat[0, 1]) else 1.0
+    rb_corr = float(rb_mat[0, 1]) if not np.isnan(rb_mat[0, 1]) else 1.0
+    channel_correlation = (rg_corr + rb_corr) / 2.0
+
+    # Rejection rules — need 3+ signals to reject
+    is_too_colorful = high_sat_ratio > 0.50       # >50% vivid pixels
+    is_hue_diverse = hue_std > 60.0               # wild color variety
+    is_city_lights = laplacian_var > 800.0        # sharp isolated bright spots
+    is_decorrelated = channel_correlation < 0.85  # RGB channels diverge
+
+    rejection_score = int(sum([is_too_colorful, is_hue_diverse, is_city_lights, is_decorrelated]))
+    is_valid = rejection_score < 3
+
+    if not is_valid:
+        failed_signals = []
+        if is_too_colorful: failed_signals.append(f"high saturation ({high_sat_ratio*100:.1f}% > 50%)")
+        if is_hue_diverse: failed_signals.append(f"broad hue diversity (std {hue_std:.1f} > 60)")
+        if is_city_lights: failed_signals.append(f"high texture complexity (Laplacian var {laplacian_var:.1f} > 800)")
+        if is_decorrelated: failed_signals.append(f"decorrelated RGB channels ({channel_correlation:.2f} < 0.85)")
+        reason = f"Image failed {rejection_score}/4 satellite checks: " + "; ".join(failed_signals)
+        logger.warning("validate_satellite_image REJECTED: %s", reason)
+        return False, reason
 
     return True, None
 
