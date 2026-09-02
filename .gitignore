@@ -19,3 +19,16 @@ ENV/
 # Operating System Files
 .DS_Store
 Thumbs.db
+
+# Database data folders (preserve scripts and .gitkeep files)
+database/raw/*/*
+!database/raw/*/.gitkeep
+database/labeled/*/*
+!database/labeled/*/.gitkeep
+database/augmented/*
+!database/augmented/.gitkeep
+database/ibtracs/*
+!database/ibtracs/.gitkeep
+database/metadata/*
+!database/metadata/.gitkeep
+!database/scripts/
