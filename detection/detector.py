@@ -131,23 +131,34 @@ def detect_cyclone(preprocessed_image_b64: str) -> Dict[str, Any]:
     total_pixels = float(gray.size)
     cloud_coverage_pct = round(float((cold_pixel_count / total_pixels) * 100.0), 2)
 
-    # 3. Calculate spatial vortex concentration score around cold mass centroid
+    # 3. Log-polar spiral energy score (replaces radial symmetry — real cyclones are asymmetric)
     if cold_pixel_count >= 50:
         y_idx, x_idx = np.where(thresh > 0)
         cx_c = float(np.mean(x_idx))
         cy_c = float(np.mean(y_idx))
         circulation_center = [int(round(cx_c)), int(round(cy_c))]
 
-        r_dists = np.sqrt((x_idx - cx_c) ** 2 + (y_idx - cy_c) ** 2)
-        r_equiv = np.sqrt(cold_pixel_count / np.pi)
-        in_circle = np.count_nonzero(r_dists <= r_equiv * 1.25)
-        raw_conc = float(in_circle / cold_pixel_count)
-
-        max_diag = np.sqrt(h ** 2 + w ** 2) / 2.0
-        dispersion = float(np.std(r_dists) / max_diag)
-
-        # Concentrated vortex has tight clustering near centroid and low full-frame dispersion
-        vortex_concentration_score = round(float(np.clip(raw_conc * (1.0 - dispersion * 3.0), 0.0, 1.0)), 3)
+        # Log-polar transform centered on cold mass centroid (cv2.warpPolar, OpenCV 4+)
+        # Organized spiral banding → high angular variance per radial band → high score
+        # ponytail: maxRadius covers half image diagonal; 40px output cols is sufficient resolution
+        max_radius = float(np.sqrt(h ** 2 + w ** 2) / 2.0)
+        log_polar = cv2.warpPolar(
+            gray.astype(np.float32),
+            (40, 360),
+            (cx_c, cy_c),
+            max_radius,
+            cv2.WARP_POLAR_LOG + cv2.WARP_FILL_OUTLIERS,
+        )
+        # Divide into 8 angular slices, measure std of each, then normalize
+        n_slices = 8
+        slice_h = max(1, log_polar.shape[0] // n_slices)
+        band_stds = [
+            float(np.std(log_polar[i * slice_h:(i + 1) * slice_h, :]))
+            for i in range(n_slices)
+        ]
+        max_std = max(band_stds) + 1e-6
+        # Score = mean normalized std; organized spirals ≈ 0.5–0.9, random cloud ≈ 0.1–0.3
+        vortex_concentration_score = round(float(np.clip(np.mean(band_stds) / max_std, 0.0, 1.0)), 3)
     else:
         circulation_center = [w // 2, h // 2]
         vortex_concentration_score = 0.0
