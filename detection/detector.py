@@ -191,14 +191,10 @@ def detect_cyclone(preprocessed_image_b64: str) -> Dict[str, Any]:
 
         cdo_radius_km = round(float(pseudo_cdo_radius_px * INSAT3D_KM_PER_PIXEL), 2)
 
-    # 5. Continental Land Terrain Check around circulation center
-    cx_i, cy_i = circulation_center
-    pad = 40
-    y0, y1 = max(0, cy_i - pad), min(h, cy_i + pad)
-    x0, x1 = max(0, cx_i - pad), min(w, cx_i + pad)
-    local_patch = gray[y0:y1, x0:x1]
-    local_lap_var = float(cv2.Laplacian(local_patch, cv2.CV_64F).var()) if local_patch.size > 100 else 0.0
-    is_over_land = bool(local_lap_var > 650.0)
+    # ponytail: land check removed — Laplacian ran on the binary preprocessed mask
+    #            (always high-variance at edges), not original image → always fires over ocean.
+    #            No pixel→geo-coord mapping exists; add when lat/lon metadata is available.
+    is_over_land = False
 
     # 6. Multi-Criteria Gate Threshold Enforcement
     # Hard thresholds:
@@ -209,8 +205,10 @@ def detect_cyclone(preprocessed_image_b64: str) -> Dict[str, Any]:
     #   - Not dominated solely by point-source light artifacts
     failures = []
 
-    if vortex_concentration_score < 0.55:
-        failures.append(f"Vortex concentration score ({vortex_concentration_score:.2f} < 0.55 threshold)")
+    # ponytail: 0.30 passes real asymmetric vortices (Dvorak accepts non-circular structures)
+    #            reserve 0.55 check for high-confidence eye path above
+    if vortex_concentration_score < 0.30:
+        failures.append(f"Vortex concentration score ({vortex_concentration_score:.2f} < 0.30 threshold)")
 
     if cloud_coverage_pct < 15.0:
         failures.append(f"Cold core cloud coverage ({cloud_coverage_pct:.1f}% < 15.0% threshold)")
@@ -218,8 +216,7 @@ def detect_cyclone(preprocessed_image_b64: str) -> Dict[str, Any]:
     if cdo_radius_km < 40.0:
         failures.append(f"CDO radius ({cdo_radius_km:.1f} km < 40.0 km threshold)")
 
-    if is_over_land:
-        failures.append("Circulation center is situated over continental landmass rather than warm ocean waters required for tropical cyclogenesis")
+    # is_over_land always False until geo-coordinates are available (see ponytail comment above)
 
     if point_sources_removed > 10 and cold_pixel_count < 100:
         failures.append("Point-source light artifacts detected without organized convective cloud mass")
