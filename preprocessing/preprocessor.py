@@ -29,8 +29,21 @@ if not logger.handlers:
 
 def validate_satellite_image(image_bytes: bytes) -> Tuple[bool, Optional[str]]:
     """
-    Validates whether the uploaded image is plausibly a meteorological satellite image (TIR/WV/VIS).
-    Rejects high-saturation RGB photos, nighttime city lights maps, and invalid payloads.
+    Validates whether the uploaded image is plausibly a meteorological satellite image
+    (INSAT-3D/3DR, GOES-R, NOAA, Meteosat, NASA Worldview).
+
+    Permits:
+      - Grayscale and single-channel TIR/WV/VIS
+      - Satellite images with colored overlay borders, lat/lon grids, and coastline markers
+      - False-color enhanced IR composites
+      - Nighttime Day-Night band (VIIRS/DNB) satellite scans
+
+    Rejects (via multi-signal score):
+      - Natural daylight photographs (people, landscapes, rooms, objects)
+      - Complex high-detail photographic scenes
+      - Screenshots of colorful street/road maps
+      - Blank or completely uniform images
+      - Images smaller than 100x100 pixels
 
     Returns:
         (is_valid: bool, error_message: Optional[str])
@@ -42,60 +55,67 @@ def validate_satellite_image(image_bytes: bytes) -> Tuple[bool, Optional[str]]:
     image = cv2.imdecode(np_buffer, cv2.IMREAD_UNCHANGED)
 
     if image is None:
-        return False, "Failed to decode image. Please provide a valid PNG, JPEG, or GeoTIFF image."
+        return False, "Failed to decode image. Please upload a valid PNG, JPEG, or GeoTIFF file."
 
-    # 1. Color Saturation & Multi-Channel Divergence Check
-    if image.ndim == 3 and image.shape[2] >= 3:
-        b = image[:, :, 0].astype(np.float32)
-        g = image[:, :, 1].astype(np.float32)
-        r = image[:, :, 2].astype(np.float32)
-
-        hsv = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2HSV)
-        sat = hsv[:, :, 1]
-        mean_sat = float(np.mean(sat))
-        high_sat_pct = float(np.mean(sat > 60) * 100.0)
-        channel_diff = float(np.mean(np.abs(r - g)) + np.mean(np.abs(g - b)))
-
-        if mean_sat > 25.0 or high_sat_pct > 12.0 or channel_diff > 18.0:
-            return False, (
-                "The uploaded image does not appear to be a meteorological satellite image "
-                "(detected high color saturation typical of natural color photos or colored maps). "
-                "Accepted inputs: Single-channel or grayscale Thermal Infrared (TIR), Water Vapor (WV), "
-                "or Visible (VIS) satellite imagery from MOSDAC (ISRO), NOAA Worldview, or EUMETSAT."
-            )
-
-    # 2. Nighttime City Lights / Isolated Point Cluster Check
-    gray = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2GRAY) if (image.ndim == 3 and image.shape[2] >= 3) else (image if image.ndim == 2 else image[:, :, 0])
-    _, bright_thresh = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(bright_thresh)
-
-    if num_labels > 35:
-        areas = stats[1:, cv2.CC_STAT_AREA]  # exclude background
-        small_points = np.sum(areas < 15)
-        point_ratio = float(small_points / len(areas)) if len(areas) > 0 else 0.0
-
-        if point_ratio > 0.85 and len(areas) > 40:
-            return False, (
-                "The uploaded image contains isolated point-like bright spots characteristic of nighttime city lights "
-                "or sensor noise rather than atmospheric cloud formations. "
-                "Accepted inputs: Meteorological satellite thermal infrared cloud imagery from MOSDAC (ISRO) or NOAA Worldview."
-            )
-
-    # 3. High-Frequency Random Noise / Uncorrelated Grain Check
-    diff_h = float(np.mean(np.abs(gray[1:, :].astype(np.float32) - gray[:-1, :].astype(np.float32))))
-    diff_w = float(np.mean(np.abs(gray[:, 1:].astype(np.float32) - gray[:, :-1].astype(np.float32))))
-    if diff_h > 45.0 or diff_w > 45.0:
+    # 1. Minimum Resolution Check (Hard Gate)
+    h, w = image.shape[:2]
+    if h < 100 or w < 100:
         return False, (
-            "The uploaded image exhibits extreme high-frequency pixel variation typical of unstructured random noise "
-            "or synthetic grain rather than continuous meteorological cloud patterns. "
-            "Accepted inputs: Valid satellite imagery from MOSDAC (ISRO), NOAA Worldview, or EUMETSAT."
+            f"Image resolution ({w}x{h} px) is below minimum requirement (100x100 px). "
+            "Satellite meteorological analysis requires at least 100x100 pixels."
         )
 
-    # 4. Blank / Solid Uniform Image Check
-    if float(np.std(gray)) < 2.0:
+    # Convert to grayscale for structural analysis
+    gray = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2GRAY) if (image.ndim == 3 and image.shape[2] >= 3) else (image if image.ndim == 2 else image[:, :, 0])
+
+    # 2. Blank / Zero-Variance Image Check (Hard Gate)
+    std_dev = float(np.std(gray))
+    if std_dev < 2.0:
         return False, (
-            "The uploaded image is blank or completely uniform with no discernible meteorological contrast. "
-            "Accepted inputs: Thermal infrared satellite imagery containing cloud patterns."
+            f"Image is blank or completely uniform (standard deviation {std_dev:.2f} < 2.0). "
+            "Satellite imagery must contain discernible cloud or oceanic surface features."
+        )
+
+    # 3. High-Frequency Noise / Corrupted Array Check (Hard Gate)
+    diff_h = float(np.mean(np.abs(gray[1:, :].astype(np.float32) - gray[:-1, :].astype(np.float32))))
+    diff_w = float(np.mean(np.abs(gray[:, 1:].astype(np.float32) - gray[:, :-1].astype(np.float32))))
+    if diff_h > 55.0 and diff_w > 55.0:
+        return False, (
+            f"Image exhibits extreme high-frequency pixel variation typical of unstructured random noise "
+            f"or corrupted sensor grain (measured gradient: {diff_h:.1f} > 55.0 threshold)."
+        )
+
+    # 4. Multi-Signal Score for Non-Satellite Imagery
+    flags = []
+
+    # Signal A: Broad Color Saturation
+    high_sat_pct = 0.0
+    if image.ndim == 3 and image.shape[2] >= 3:
+        hsv = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2HSV)
+        sat = hsv[:, :, 1]
+        high_sat_pct = float(np.mean(sat > 60) * 100.0)
+        if high_sat_pct > 40.0:
+            flags.append(f"broad color saturation ({high_sat_pct:.1f}% of pixels > 40.0% threshold)")
+
+    # Signal B: Background Darkness / Oceanic Baseline
+    dark_pct = float(np.mean(gray < 128) * 100.0)
+    if dark_pct < 20.0:
+        flags.append(f"insufficient dark background / oceanic baseline ({dark_pct:.1f}% < 20.0% threshold)")
+
+    # Signal C: Photographic Scene Texture Complexity
+    laplacian_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    edges = cv2.Canny(gray, 80, 180)
+    edge_density = float(np.mean(edges > 0) * 100.0)
+    if laplacian_var > 900.0 and edge_density > 25.0:
+        flags.append(f"excessive scene texture complexity (Laplacian variance {laplacian_var:.1f}, edge density {edge_density:.1f}%)")
+
+    # Reject only when multiple signals strongly indicate non-satellite source
+    if len(flags) >= 2 or high_sat_pct > 65.0:
+        reason_list = "; ".join(flags)
+        return False, (
+            f"Uploaded image does not appear to be a meteorological satellite image ({reason_list}). "
+            "Accepted inputs: Single-channel or overlay-annotated Thermal Infrared (TIR), Water Vapor (WV), "
+            "Visible (VIS), or false-color satellite scans from MOSDAC (ISRO), NOAA Worldview, NASA Worldview, or EUMETSAT."
         )
 
     return True, None
@@ -139,7 +159,9 @@ def preprocess_tir(image_bytes: bytes) -> Dict[str, Any]:
       1. Decode image bytes to grayscale
       2. Apply CLAHE (clipLimit=3.0, tileGridSize=(8,8)) for contrast enhancement
       3. Apply GaussianBlur (5x5 kernel) for high-frequency noise reduction
-      4. Apply Otsu's Thresholding (THRESH_BINARY_INV + THRESH_OTSU) to isolate cold cloud tops (dark in TIR)
+      4. Apply Adaptive Otsu's Thresholding:
+         - Standard TIR (mean >= 50): THRESH_BINARY_INV to segment dark cold tops as white
+         - Dark/Night visible (mean < 50): THRESH_BINARY to segment bright structures as white
       5. Apply Morphological Closing (5x5 kernel, 3 iterations) to fill speckle holes
       6. Compute statistics: cloud coverage %, cold core density, mean brightness, histogram
     """
@@ -155,8 +177,12 @@ def preprocess_tir(image_bytes: bytes) -> Dict[str, Any]:
     # 3. Gaussian Blur (5x5 kernel)
     blurred = cv2.GaussianBlur(enhanced, (5, 5), sigmaX=0)
 
-    # 4. Otsu's Inverted Thresholding: cold clouds are dark in raw TIR -> segmented as white in binary mask
-    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    # 4. Otsu's Thresholding (brightness-adaptive)
+    mean_b = float(np.mean(gray))
+    if mean_b >= 50.0:
+        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    else:
+        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     # 5. Morphological Closing (5x5 structuring element, 3 iterations)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
