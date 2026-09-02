@@ -27,6 +27,80 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 
+def validate_satellite_image(image_bytes: bytes) -> Tuple[bool, Optional[str]]:
+    """
+    Validates whether the uploaded image is plausibly a meteorological satellite image (TIR/WV/VIS).
+    Rejects high-saturation RGB photos, nighttime city lights maps, and invalid payloads.
+
+    Returns:
+        (is_valid: bool, error_message: Optional[str])
+    """
+    if not image_bytes or len(image_bytes) < 32:
+        return False, "Uploaded image payload is empty or corrupted."
+
+    np_buffer = np.frombuffer(image_bytes, dtype=np.uint8)
+    image = cv2.imdecode(np_buffer, cv2.IMREAD_UNCHANGED)
+
+    if image is None:
+        return False, "Failed to decode image. Please provide a valid PNG, JPEG, or GeoTIFF image."
+
+    # 1. Color Saturation & Multi-Channel Divergence Check
+    if image.ndim == 3 and image.shape[2] >= 3:
+        b = image[:, :, 0].astype(np.float32)
+        g = image[:, :, 1].astype(np.float32)
+        r = image[:, :, 2].astype(np.float32)
+
+        hsv = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2HSV)
+        sat = hsv[:, :, 1]
+        mean_sat = float(np.mean(sat))
+        high_sat_pct = float(np.mean(sat > 60) * 100.0)
+        channel_diff = float(np.mean(np.abs(r - g)) + np.mean(np.abs(g - b)))
+
+        if mean_sat > 25.0 or high_sat_pct > 12.0 or channel_diff > 18.0:
+            return False, (
+                "The uploaded image does not appear to be a meteorological satellite image "
+                "(detected high color saturation typical of natural color photos or colored maps). "
+                "Accepted inputs: Single-channel or grayscale Thermal Infrared (TIR), Water Vapor (WV), "
+                "or Visible (VIS) satellite imagery from MOSDAC (ISRO), NOAA Worldview, or EUMETSAT."
+            )
+
+    # 2. Nighttime City Lights / Isolated Point Cluster Check
+    gray = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2GRAY) if (image.ndim == 3 and image.shape[2] >= 3) else (image if image.ndim == 2 else image[:, :, 0])
+    _, bright_thresh = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(bright_thresh)
+
+    if num_labels > 35:
+        areas = stats[1:, cv2.CC_STAT_AREA]  # exclude background
+        small_points = np.sum(areas < 15)
+        point_ratio = float(small_points / len(areas)) if len(areas) > 0 else 0.0
+
+        if point_ratio > 0.85 and len(areas) > 40:
+            return False, (
+                "The uploaded image contains isolated point-like bright spots characteristic of nighttime city lights "
+                "or sensor noise rather than atmospheric cloud formations. "
+                "Accepted inputs: Meteorological satellite thermal infrared cloud imagery from MOSDAC (ISRO) or NOAA Worldview."
+            )
+
+    # 3. High-Frequency Random Noise / Uncorrelated Grain Check
+    diff_h = float(np.mean(np.abs(gray[1:, :].astype(np.float32) - gray[:-1, :].astype(np.float32))))
+    diff_w = float(np.mean(np.abs(gray[:, 1:].astype(np.float32) - gray[:, :-1].astype(np.float32))))
+    if diff_h > 45.0 or diff_w > 45.0:
+        return False, (
+            "The uploaded image exhibits extreme high-frequency pixel variation typical of unstructured random noise "
+            "or synthetic grain rather than continuous meteorological cloud patterns. "
+            "Accepted inputs: Valid satellite imagery from MOSDAC (ISRO), NOAA Worldview, or EUMETSAT."
+        )
+
+    # 4. Blank / Solid Uniform Image Check
+    if float(np.std(gray)) < 2.0:
+        return False, (
+            "The uploaded image is blank or completely uniform with no discernible meteorological contrast. "
+            "Accepted inputs: Thermal infrared satellite imagery containing cloud patterns."
+        )
+
+    return True, None
+
+
 def _decode_to_grayscale(image_bytes: bytes) -> np.ndarray:
     """Decode raw image bytes into a single-channel 8-bit grayscale image."""
     if not image_bytes:

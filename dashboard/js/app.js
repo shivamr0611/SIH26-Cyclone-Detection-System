@@ -111,98 +111,80 @@ function analyzeImagePixels(imageElement) {
 // ------------------------------------------------------------------------------
 // 4. Cyclone Detection & Meteorological Estimation Logic
 // ------------------------------------------------------------------------------
-function calculateCycloneMetrics(cloudPercent, corePercent) {
-  // CASE A: Clear sky or very few scattered clouds (< 16% cloud cover)
-  if (cloudPercent < 16 || corePercent < 2.5) {
-    // High confidence that NO cyclone exists in this area
-    const clearConfidence = Math.min(99.2, (98.0 - cloudPercent * 0.5)).toFixed(1);
+// ------------------------------------------------------------------------------
+// 4. Cyclone Detection & Meteorological Estimation Logic (IMD Scale)
+// ------------------------------------------------------------------------------
+function getImdScale(windKmh) {
+  if (windKmh < 52) return { name: "Depression", color: "#3b82f6", risk: "LOW", riskColor: "#10b981" };
+  if (windKmh < 62) return { name: "Deep Depression", color: "#06b6d4", risk: "LOW", riskColor: "#10b981" };
+  if (windKmh < 89) return { name: "Cyclonic Storm", color: "#eab308", risk: "MODERATE", riskColor: "#f59e0b" };
+  if (windKmh < 118) return { name: "Severe Cyclonic Storm", color: "#f97316", risk: "HIGH", riskColor: "#ef4444" };
+  if (windKmh < 167) return { name: "Very Severe Cyclonic Storm", color: "#ef4444", risk: "HIGH", riskColor: "#ef4444" };
+  if (windKmh < 222) return { name: "Extremely Severe Cyclonic Storm", color: "#ec4899", risk: "EXTREME", riskColor: "#9333ea" };
+  return { name: "Super Cyclonic Storm", color: "#a855f7", risk: "EXTREME", riskColor: "#9333ea" };
+}
 
+function calculateCycloneMetrics(cloudPercent, corePercent) {
+  // False positive gate: insufficient cloud cover or core
+  if (cloudPercent < 5.0 || corePercent < 1.0) {
+    const clearConfidence = Math.min(99.2, (98.0 - cloudPercent * 0.5)).toFixed(1);
     return {
       isCyclone: false,
       confidence: clearConfidence,
       statusTitle: "No Cyclone Detected",
-      statusDescription: `Clear area: Cloud coverage is ${cloudPercent}% (insufficient for a cyclone vortex).`,
+      statusDescription: `Insufficient convective cloud coverage (${cloudPercent}% < 5.0% threshold).`,
+      notDetectedReason: `Insufficient convective cloud coverage (${cloudPercent}% < 5.0% threshold).`,
       cloudCoverage: cloudPercent,
       denseCore: corePercent,
-      dvorakRating: "T0.5",
+      vortexConcentration: "0.00",
+      dvorakRating: "T0.0",
       category: "None",
       categoryColor: "#10b981",
       windSpeed: 0,
-      pressure: 1013,
+      pressure: 1012,
       riskLevel: "NONE",
       riskColor: "#10b981",
       forecast: []
     };
   }
 
-  // CASE B: Cyclone Detected (Thick clouds & cold core present)
-  // 1. Calculate Dvorak T-Number (standard hurricane measurement from T1.5 to T7.0)
-  const tNumber = Math.min(7.2, Math.max(1.5, 1.0 + (cloudPercent * 0.05) + (corePercent * 0.12)));
-
-  // 2. Estimate Wind Speed (km/h) from T-Number
+  // Cyclone Estimation (IMD Scale & Dvorak)
+  const tNumber = Math.min(8.0, Math.max(1.0, 1.0 + (cloudPercent * 0.04) + (corePercent * 0.10)));
   const windSpeed = Math.round(30 + Math.pow(tNumber, 2.1) * 3.5);
+  const pressure = Math.round(1012 - (windSpeed * 0.45));
+  const confidence = Math.min(98.8, Math.max(68.0, 55.0 + cloudPercent * 0.35 + corePercent * 0.3)).toFixed(1);
+  const imd = getImdScale(windSpeed);
 
-  // 3. Estimate Central Pressure (hPa) - Higher wind means lower central pressure
-  const pressure = Math.round(1013 - (windSpeed * 0.45));
+  // Future Forecast Horizons
+  const w12 = Math.round(windSpeed * 1.08);
+  const w24 = Math.round(windSpeed * 1.15);
+  const w48 = Math.round(windSpeed * 1.02);
+  const w72 = Math.round(windSpeed * 0.80);
 
-  // 4. Calculate Confidence (e.g. 70% to 98%)
-  const confidence = Math.min(98.8, Math.max(68.0, 60.0 + cloudPercent * 0.4 + corePercent * 0.3)).toFixed(1);
-
-  // 5. Determine Cyclone Category based on Wind Speed
-  let category = "Category 1";
-  let categoryColor = "#eab308";
-
-  if (windSpeed >= 215) {
-    category = "Category 5";
-    categoryColor = "#ec4899";
-  } else if (windSpeed >= 165) {
-    category = "Category 4";
-    categoryColor = "#ef4444";
-  } else if (windSpeed >= 130) {
-    category = "Category 3";
-    categoryColor = "#f97316";
-  } else if (windSpeed >= 90) {
-    category = "Category 2";
-    categoryColor = "#f59e0b";
-  } else if (windSpeed < 62) {
-    category = "Depression";
-    categoryColor = "#3b82f6";
-  }
-
-  // 6. Hazard Risk Level
-  let riskLevel = "LOW";
-  let riskColor = "#10b981";
-  if (windSpeed >= 160) {
-    riskLevel = "HIGH";
-    riskColor = "#ef4444";
-  } else if (windSpeed >= 90) {
-    riskLevel = "MODERATE";
-    riskColor = "#f59e0b";
-  }
-
-  // 7. Future Forecast Horizons (+12h, +24h, +48h, +72h)
   const forecast = [
-    { horizon: "Now",    wind: windSpeed,                  pressure: pressure,      category: category, trend: "flat" },
-    { horizon: "+12 hr", wind: Math.round(windSpeed * 1.08), pressure: pressure - 6,  category: category, trend: "up" },
-    { horizon: "+24 hr", wind: Math.round(windSpeed * 1.14), pressure: pressure - 12, category: category, trend: "up" },
-    { horizon: "+48 hr", wind: Math.round(windSpeed * 1.02), pressure: pressure - 3,  category: category, trend: "down" },
-    { horizon: "+72 hr", wind: Math.round(windSpeed * 0.80), pressure: pressure + 15, category: "Weakening", trend: "down" }
+    { horizon: "Now",    wind: windSpeed, pressure: pressure,      category: imd.name, trend: "flat" },
+    { horizon: "+12 hr", wind: w12,       pressure: pressure - 6,  category: getImdScale(w12).name, trend: "up" },
+    { horizon: "+24 hr", wind: w24,       pressure: pressure - 12, category: getImdScale(w24).name, trend: "up" },
+    { horizon: "+48 hr", wind: w48,       pressure: pressure - 3,  category: getImdScale(w48).name, trend: "down" },
+    { horizon: "+72 hr", wind: w72,       pressure: pressure + 15, category: getImdScale(w72).name, trend: "down" }
   ];
 
   return {
     isCyclone: true,
     confidence: confidence,
     statusTitle: "Cyclone Detected",
-    statusDescription: `Vortex identified with ${cloudPercent}% cloud density and cold core mass.`,
+    statusDescription: `Convective cloud mass identified with ${cloudPercent}% coverage and cold core formation.`,
+    notDetectedReason: null,
     cloudCoverage: cloudPercent,
     denseCore: corePercent,
+    vortexConcentration: "0.75",
     dvorakRating: `T${tNumber.toFixed(1)}`,
-    category: category,
-    categoryColor: categoryColor,
+    category: imd.name,
+    categoryColor: imd.color,
     windSpeed: windSpeed,
     pressure: pressure,
-    riskLevel: riskLevel,
-    riskColor: riskColor,
+    riskLevel: imd.risk,
+    riskColor: imd.riskColor,
     forecast: forecast
   };
 }
@@ -217,42 +199,50 @@ async function analyze() {
   const loader = document.getElementById("loader");
   const resultsSection = document.getElementById("results-section");
 
-  // Show loading state
   analyzeBtn.disabled = true;
   analyzeBtn.textContent = "Analyzing Image...";
   loader.style.display = "block";
   resultsSection.style.display = "none";
 
   try {
-    // Attempt real backend API call
     const res = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tir: imageBase64 })
     });
 
-    if (res.ok) {
-      const data = await res.json();
-      displayResults({
-        isCyclone: data.isCyclone,
-        confidence: (data.confidence * (data.confidence <= 1 ? 100 : 1)).toFixed(1),
-        statusTitle: data.isCyclone ? "Cyclone Detected" : "No Cyclone Detected",
-        statusDescription: data.isCyclone 
-          ? `Vortex identified with ${data.cloudCoverage}% cloud coverage and Dvorak T${data.dvorakRating}.`
-          : `Clear area: Cloud coverage is ${data.cloudCoverage}%.`,
-        cloudCoverage: data.cloudCoverage,
-        denseCore: data.denseCore,
-        dvorakRating: `T${typeof data.dvorakRating === 'number' ? data.dvorakRating.toFixed(1) : data.dvorakRating}`,
-        category: data.category,
-        categoryColor: data.categoryColor || "#f97316",
-        windSpeed: data.windSpeed,
-        pressure: data.pressure,
-        riskLevel: data.riskLevel,
-        riskColor: data.riskColor || "#ef4444",
-        forecast: data.forecast || []
-      });
+    const data = await res.json();
+
+    if (!res.ok) {
+      alert(`[Image Validation Error]: ${data.error || "Failed to process image."}`);
+      loader.style.display = "none";
+      analyzeBtn.disabled = false;
+      analyzeBtn.textContent = "Analyze Image";
       return;
     }
+
+    displayResults({
+      isCyclone: data.isCyclone,
+      notDetectedReason: data.not_detected_reason,
+      confidence: (data.confidence * (data.confidence <= 1 ? 100 : 1)).toFixed(1),
+      statusTitle: data.isCyclone ? "Cyclone Detected" : "No Cyclone Detected",
+      statusDescription: data.isCyclone 
+        ? `Vortex identified with ${data.cloudCoverage}% cloud coverage and Dvorak T${data.dvorakRating}.`
+        : (data.not_detected_reason || `No cyclone vortex pattern detected. Cloud coverage: ${data.cloudCoverage}%.`),
+      cloudCoverage: data.cloudCoverage,
+      denseCore: data.denseCore,
+      vortexConcentration: (data.vortex_concentration_score !== undefined) ? Number(data.vortex_concentration_score).toFixed(2) : "0.00",
+      dvorakRating: `T${typeof data.dvorakRating === 'number' ? data.dvorakRating.toFixed(1) : (data.dvorakRating || '0.0')}`,
+      category: data.category || "None",
+      categoryColor: data.categoryColor || "#10b981",
+      windSpeed: data.windSpeed || 0,
+      pressure: data.pressure || 1012,
+      riskLevel: data.riskLevel || "NONE",
+      riskColor: data.riskColor || "#10b981",
+      forecast: data.forecast_table || data.forecast || []
+    });
+    return;
+
   } catch (err) {
     console.warn("Backend API not reachable; using client-side calculation:", err);
   } finally {
@@ -282,7 +272,7 @@ function displayResults(data) {
   const forecastWrapper = document.getElementById("forecast-wrapper");
 
   if (data.isCyclone) {
-    // CYCLONE DETECTED: Red banner & display metrics
+    // CYCLONE DETECTED
     statusBox.className = "status-box detected";
     statusIcon.textContent = "🌀";
     statusTitle.textContent = data.statusTitle;
@@ -303,11 +293,11 @@ function displayResults(data) {
     renderForecastTable(data.forecast);
     forecastWrapper.style.display = "block";
   } else {
-    // NO CYCLONE: Green banner
+    // NO CYCLONE DETECTED
     statusBox.className = "status-box clear";
     statusIcon.textContent = "✅";
     statusTitle.textContent = data.statusTitle;
-    statusDesc.textContent = data.statusDescription;
+    statusDesc.textContent = data.notDetectedReason || data.statusDescription || "Area is clear of cyclone vortex formation.";
     confBadge.textContent = `${data.confidence}% Clear`;
     confBadge.style.color = "#10b981";
 
@@ -319,6 +309,10 @@ function displayResults(data) {
   // Update cloud diagnostic summary numbers
   document.getElementById("cs-cloud").textContent = `${data.cloudCoverage}%`;
   document.getElementById("cs-core").textContent = `${data.denseCore}%`;
+  const concElem = document.getElementById("cs-conc");
+  if (concElem) {
+    concElem.textContent = data.vortexConcentration || "0.00";
+  }
   document.getElementById("cs-tnum").textContent = data.dvorakRating;
 
   // Make results visible
@@ -331,6 +325,8 @@ function displayResults(data) {
 function renderForecastTable(rows) {
   const tbody = document.getElementById("forecast-tbody");
   tbody.innerHTML = "";
+
+  if (!rows || rows.length === 0) return;
 
   rows.forEach(item => {
     let arrow = "→";

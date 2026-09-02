@@ -112,8 +112,31 @@ def detect_cyclone(preprocessed_image_b64: str) -> Dict[str, Any]:
     eye_diameter_km: Optional[float] = None
     cdo_radius_km: float = 0.0
     circulation_center: List[int] = [w // 2, h // 2]
-    confidence: float = 0.0
-    cyclone_detected: bool = False
+    # 4. Extract cold mask and calculate vortex concentration score
+    _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+    cold_pixel_count = int(np.count_nonzero(thresh))
+    total_pixels = float(gray.size)
+    cloud_coverage_pct = round(float((cold_pixel_count / total_pixels) * 100.0), 2)
+
+    if cold_pixel_count >= 50:
+        y_idx, x_idx = np.where(thresh > 127)
+        cx_c = float(np.mean(x_idx))
+        cy_c = float(np.mean(y_idx))
+        circulation_center = [int(round(cx_c)), int(round(cy_c))]
+
+        r_dists = np.sqrt((x_idx - cx_c) ** 2 + (y_idx - cy_c) ** 2)
+        r_equiv = np.sqrt(cold_pixel_count / np.pi)
+        in_circle = np.count_nonzero(r_dists <= r_equiv * 1.25)
+        raw_conc = float(in_circle / cold_pixel_count)
+
+        max_diag = np.sqrt(h ** 2 + w ** 2) / 2.0
+        dispersion = float(np.std(r_dists) / max_diag)
+
+        # Concentrated vortex has tight clustering near centroid and low full-frame dispersion
+        vortex_concentration_score = round(float(np.clip(raw_conc * (1.0 - dispersion * 3.0), 0.0, 1.0)), 3)
+    else:
+        circulation_center = [w // 2, h // 2]
+        vortex_concentration_score = 0.0
 
     if circles is not None and len(circles) > 0:
         # Select best candidate closest to image center
@@ -129,57 +152,75 @@ def detect_cyclone(preprocessed_image_b64: str) -> Dict[str, Any]:
         eye_center = [int(round(cx)), int(round(cy))]
         circulation_center = eye_center
         has_clear_eye = True
-        cyclone_detected = True
 
         # Calculate physical dimensions (4km/pixel)
         eye_radius_km = radius * INSAT3D_KM_PER_PIXEL
         eye_diameter_km = round(2.0 * eye_radius_km, 2)
         cdo_radius_km = round(2.5 * eye_radius_km, 2)
 
-        # Confidence based on Hough circle response strength
-        # Normalized response score in [0.75, 0.98]
-        confidence = round(float(min(0.98, max(0.75, 0.70 + (radius / 60.0) * 0.25))), 2)
-
         logger.info(
-            "Clear Eye Detected at %s: Diameter=%.2f km, CDO Radius=%.2f km (Conf: %.2f)",
+            "Clear Eye Detected at %s: Diameter=%.2f km, CDO Radius=%.2f km",
             eye_center,
             eye_diameter_km,
             cdo_radius_km,
-            confidence,
         )
 
     else:
         # 5. When no clear eye, compute pseudo-CDO from largest contour in cold-thresholded mask
-        _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if contours:
             largest = max(contours, key=cv2.contourArea)
             area = cv2.contourArea(largest)
             pseudo_cdo_radius_px = np.sqrt(area / np.pi)
-            moments = cv2.moments(largest)
-            if moments["m00"] > 0:
-                cx = int(round(moments["m10"] / moments["m00"]))
-                cy = int(round(moments["m01"] / moments["m00"]))
-                circulation_center = [cx, cy]
-            else:
-                circulation_center = [w // 2, h // 2]
         else:
             pseudo_cdo_radius_px = 0.0
-            circulation_center = [w // 2, h // 2]
 
         cdo_radius_km = round(float(pseudo_cdo_radius_px * INSAT3D_KM_PER_PIXEL), 2)
-        cyclone_detected = bool(cdo_radius_km > 10.0 or pseudo_cdo_radius_px > 3.0)
-        confidence = round(float(min(0.85, max(0.40, (cdo_radius_km / 300.0) * 0.85))), 2)
 
-        logger.info(
-            "No clear eye detected. Circulation center estimated at %s (CDO Radius: %.2f km, Conf: %.2f)",
-            circulation_center,
-            cdo_radius_km,
-            confidence,
-        )
+    # 6. Multi-Criteria Detection Gate (BUG 1 & BUG 4 Fix)
+    # A cyclone is declared detected only when ALL criteria are satisfied:
+    # 1. Cold cloud coverage >= 5.0% and <= 85.0% (unless eye is present)
+    # 2. Spatial concentration toward centroid >= 0.45
+    # 3. CDO radius >= 40.0 km
+    cyclone_detected = False
+    not_detected_reason: Optional[str] = None
+
+    if has_clear_eye and cloud_coverage_pct >= 3.0 and cdo_radius_km >= 30.0:
+        cyclone_detected = True
+        confidence = round(float(min(0.98, max(0.75, 0.70 + (cdo_radius_km / 400.0) * 0.25))), 2)
+    elif cloud_coverage_pct < 5.0:
+        cyclone_detected = False
+        not_detected_reason = f"Insufficient convective cloud coverage ({cloud_coverage_pct:.1f}% < 5.0% threshold)."
+        confidence = round(float(min(0.99, max(0.85, 0.99 - cloud_coverage_pct * 0.02))), 2)
+    elif cloud_coverage_pct > 85.0 and not has_clear_eye:
+        cyclone_detected = False
+        not_detected_reason = f"Uniformly high cold cloud coverage ({cloud_coverage_pct:.1f}%) lacks localized cyclonic vortex structure."
+        confidence = 0.90
+    elif vortex_concentration_score < 0.45:
+        cyclone_detected = False
+        not_detected_reason = f"Dispersed cloud mass with low central organization (concentration score {vortex_concentration_score:.2f} < 0.45 threshold)."
+        confidence = round(float(min(0.95, max(0.80, 0.95 - vortex_concentration_score * 0.1))), 2)
+    elif cdo_radius_km < 40.0:
+        cyclone_detected = False
+        not_detected_reason = f"Central Dense Overcast (CDO) radius is below physical cyclone threshold ({cdo_radius_km:.1f} km < 40.0 km)."
+        confidence = round(float(min(0.95, max(0.80, 0.95 - (cdo_radius_km / 40.0) * 0.1))), 2)
+    else:
+        cyclone_detected = True
+        confidence = round(float(min(0.95, max(0.65, 0.45 + (cdo_radius_km / 400.0) * 0.35 + vortex_concentration_score * 0.15))), 2)
+
+    logger.info(
+        "Detection Decision: detected=%s, reason=%s, CDO=%.1f km, conc=%.2f, cov=%.1f%%",
+        cyclone_detected,
+        not_detected_reason,
+        cdo_radius_km,
+        vortex_concentration_score,
+        cloud_coverage_pct,
+    )
 
     return {
         "cyclone_detected": cyclone_detected,
+        "not_detected_reason": not_detected_reason,
+        "vortex_concentration_score": vortex_concentration_score,
         "has_clear_eye": has_clear_eye,
         "eye_center": eye_center,
         "eye_diameter_km": eye_diameter_km,
