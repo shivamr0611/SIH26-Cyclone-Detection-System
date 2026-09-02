@@ -88,52 +88,44 @@ class DemoClassifier:
     def __init__(self, name: str = "Demo-StatisticalClassifier"):
         self.name = name
 
-    def classify(self, image_array: np.ndarray) -> Dict[str, Any]:
+    def classify(self, image_array: Any) -> Dict[str, Any]:
         """
-        Classifies input satellite tensor (3, 224, 224) into 5 IMD categories.
-
-        Args:
-            image_array: np.ndarray of shape (3, 224, 224) or (224, 224) with values in [0.0, 1.0].
-
-        Returns:
-            dict containing:
-              - predicted_class (str)
-              - confidence (float)
-              - class_probabilities (dict[str, float])
-              - model_mode ("demo")
+        Classifies input satellite tensor (3, 224, 224) or image array into 5 IMD categories
+        using image convective statistics.
         """
-        tir_chan = image_array[0] if image_array.ndim == 3 else image_array
+        img = np.array(image_array, dtype=np.float32)
+        if np.max(img) > 1.0:
+            img = img / 255.0
 
-        # Extract convective metrics
-        cold_frac = float(np.mean(tir_chan > 0.65))
-        core_frac = float(np.mean(tir_chan > 0.85))
-        mean_bright = float(np.mean(tir_chan))
+        mean_brightness = float(np.mean(img))
+        cold_fraction = float(np.mean(img < 0.3))  # fraction of dark/cold pixels
 
-        # Calibrated logits via sigmoid/linear combinations
-        logits = np.array([
-            max(0.05, 1.2 - cold_frac * 3.5),
-            max(0.05, 1.4 - abs(cold_frac - 0.22) * 4.0),
-            max(0.05, 1.5 - abs(cold_frac - 0.42) * 3.0),
-            max(0.05, 0.8 + core_frac * 4.5 + (mean_bright - 0.5)),
-            max(0.05, 0.4 + core_frac * 8.5 + cold_frac * 2.2),
-        ], dtype=np.float32)
+        # Map to category probabilities
+        intensity_score = float(np.clip(cold_fraction * 0.7 + (1.0 - mean_brightness) * 0.3, 0.0, 1.0))
 
-        exp_logits = np.exp(logits - np.max(logits))
-        probs = exp_logits / np.sum(exp_logits)
+        # Generate probabilities that SUM to 1.0 and vary dynamically by image
+        peak_idx = int(intensity_score * 4.99)
+        probs = np.zeros(5, dtype=np.float32)
+        probs[peak_idx] = 0.45
+        if peak_idx > 0:
+            probs[peak_idx - 1] = 0.25
+        if peak_idx < 4:
+            probs[peak_idx + 1] = 0.20
+        remaining = 1.0 - float(probs.sum())
+        probs += remaining / 5.0
 
-        pred_idx = int(np.argmax(probs))
-        pred_class = IMD_CATEGORIES[pred_idx]
-        confidence = float(round(float(probs[pred_idx]), 3))
-
-        class_probs = {
-            cat: float(round(float(probs[i]), 3))
-            for i, cat in enumerate(IMD_CATEGORIES)
-        }
+        categories = [
+            "Depression",
+            "Deep_Depression",
+            "Cyclonic_Storm",
+            "Severe_Cyclonic_Storm",
+            "Very_Severe_Cyclonic_Storm",
+        ]
 
         return {
-            "predicted_class": pred_class,
-            "confidence": confidence,
-            "class_probabilities": class_probs,
+            "predicted_class": categories[peak_idx],
+            "confidence": float(round(float(probs[peak_idx]), 3)),
+            "class_probabilities": dict(zip(categories, [float(round(float(p), 3)) for p in probs])),
             "model_mode": "demo",
         }
 

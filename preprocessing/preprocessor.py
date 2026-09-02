@@ -65,26 +65,14 @@ def preprocess_tir(image_bytes: bytes) -> Dict[str, Any]:
       1. Decode image bytes to grayscale
       2. Apply CLAHE (clipLimit=3.0, tileGridSize=(8,8)) for contrast enhancement
       3. Apply GaussianBlur (5x5 kernel) for high-frequency noise reduction
-      4. Apply Adaptive Thresholding (ADAPTIVE_THRESH_GAUSSIAN_C) to isolate cold cloud tops
+      4. Apply Otsu's Thresholding (THRESH_BINARY_INV + THRESH_OTSU) to isolate cold cloud tops (dark in TIR)
       5. Apply Morphological Closing (5x5 kernel, 3 iterations) to fill speckle holes
       6. Compute statistics: cloud coverage %, cold core density, mean brightness, histogram
-
-    Args:
-        image_bytes: Raw bytes of the input image (PNG, JPEG, GeoTIFF, etc.)
-
-    Returns:
-        dict containing:
-          - cloud_coverage_pct (float): % pixels classified as cold cloud tops
-          - cold_core_density (float): % pixels in coldest 10th percentile
-          - mean_brightness (float): Mean intensity of CLAHE-enhanced image
-          - processed_image_b64 (str): Base64-encoded processed PNG
-          - histogram (list[int]): 256-bin grayscale histogram
     """
     logger.debug("Starting TIR preprocessing pipeline (%d bytes)...", len(image_bytes))
 
     # 1. Decode image
     gray = _decode_to_grayscale(image_bytes)
-    total_pixels = float(gray.size)
 
     # 2. CLAHE (Contrast Limited Adaptive Histogram Equalization)
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
@@ -93,47 +81,32 @@ def preprocess_tir(image_bytes: bytes) -> Dict[str, Any]:
     # 3. Gaussian Blur (5x5 kernel)
     blurred = cv2.GaussianBlur(enhanced, (5, 5), sigmaX=0)
 
-    # 4. Adaptive Thresholding to segment cold convective cloud tops
-    thresh = cv2.adaptiveThreshold(
-        blurred,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        blockSize=11,
-        C=2,
-    )
+    # 4. Otsu's Inverted Thresholding: cold clouds are dark in raw TIR -> segmented as white in binary mask
+    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
     # 5. Morphological Closing (5x5 structuring element, 3 iterations)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
     closed_mask = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=3)
 
     # 6. Extract metrics
-    cloud_pixels = np.count_nonzero(closed_mask)
-    cloud_coverage_pct = round(float((cloud_pixels / total_pixels) * 100.0), 2)
+    cloud_coverage_pct = round(float((np.sum(closed_mask > 0) / closed_mask.size) * 100.0), 2)
 
-    # Cold core density: pixels in the coldest 10th percentile intensity
-    cold_threshold = np.percentile(enhanced, 10)
-    cold_core_pixels = np.count_nonzero(enhanced <= cold_threshold)
-    cold_core_density = round(float((cold_core_pixels / total_pixels) * 100.0), 2)
+    # Cold core density: percentage of pixels in coldest 10th percentile of raw image
+    cold_threshold = np.percentile(gray, 10)
+    cold_core_pixels = np.count_nonzero(gray <= cold_threshold)
+    cold_core_density = round(float((cold_core_pixels / gray.size) * 100.0), 2)
 
-    mean_brightness = round(float(np.mean(enhanced)), 2)
+    mean_brightness = round(float(np.mean(gray)), 2)
 
     # 256-bin histogram
-    hist_raw = cv2.calcHist([enhanced], [0], None, [256], [0, 256])
+    hist_raw = cv2.calcHist([gray], [0], None, [256], [0, 256])
     histogram: List[int] = hist_raw.ravel().astype(int).tolist()
 
-    # Base64 encode enhanced image
-    success, buffer = cv2.imencode(".png", enhanced)
+    # Base64 encode processed mask for downstream detector
+    success, buffer = cv2.imencode(".png", closed_mask)
     if not success:
         raise RuntimeError("Failed to encode processed image to PNG buffer.")
     processed_b64 = base64.b64encode(buffer.tobytes()).decode("utf-8")
-
-    logger.debug(
-        "TIR preprocessing complete: cloud_coverage=%.2f%%, cold_core=%.2f%%, mean_brightness=%.2f",
-        cloud_coverage_pct,
-        cold_core_density,
-        mean_brightness,
-    )
 
     return {
         "cloud_coverage_pct": cloud_coverage_pct,

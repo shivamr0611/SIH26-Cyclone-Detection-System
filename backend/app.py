@@ -59,7 +59,7 @@ except ImportError:
 
 # Import CycloneAI Pipeline Modules
 from classification.classifier import CycloneClassifier, classify_with_cnn, full_classify, generate_grad_cam
-from classification.dvorak import compute_t_number, t_number_to_category
+from classification.dvorak import classify, compute_t_number, t_number_to_category
 from detection.detector import CycloneDetector, detect_cyclone
 from prediction.intensity_predictor import CycloneIntensityLSTM, IntensityPredictor, predict_intensity
 from preprocessing.band_analyzer import analyze_spiral_bands, full_detection
@@ -110,7 +110,7 @@ if FLASK_AVAILABLE and app:
 
 
 # ==============================================================================
-# Route 0: Frontend Dashboard Static Hosting
+# Route 0: Frontend Dashboard Static Hosting & Diagnostics
 # ==============================================================================
 
 if FLASK_AVAILABLE and app:
@@ -118,6 +118,47 @@ if FLASK_AVAILABLE and app:
     def serve_dashboard() -> Any:
         """Serves the frontend web dashboard index.html."""
         return send_from_directory(str(DASHBOARD_FOLDER), "index.html")
+
+    @app.route("/api/test", methods=["GET"])
+    def test_pipeline() -> Any:
+        """Test that different synthetic inputs give different outputs"""
+        import cv2
+        import numpy as np
+
+        results = []
+        for size in [30, 80, 150]:
+            img = np.ones((512, 512), dtype=np.uint8) * 200  # warm ocean
+            cx, cy = 256, 256
+            y, x = np.ogrid[:512, :512]
+            mask = (x - cx) ** 2 + (y - cy) ** 2 <= size ** 2
+            img[mask] = 50  # cold cloud top
+
+            _, buf = cv2.imencode(".png", img)
+            image_bytes = buf.tobytes()
+
+            pre = preprocess_tir(image_bytes)
+            det = detect_cyclone(pre["processed_image_b64"])
+            band = analyze_spiral_bands(image_bytes, (256, 256))
+            dvorak = classify({
+                "cdo_radius_km": det["cdo_radius_km"],
+                "banding_score": band["banding_score"],
+                "has_clear_eye": det["has_clear_eye"],
+                "eye_diameter_km": det.get("eye_diameter_km"),
+            })
+
+            results.append({
+                "test_cold_core_radius_px": size,
+                "cloud_coverage_pct": pre["cloud_coverage_pct"],
+                "cdo_radius_km": det["cdo_radius_km"],
+                "t_number": dvorak.get("t_number", dvorak.get("t_number_val")),
+                "category": dvorak["category"],
+            })
+
+        t_numbers = [r["t_number"] for r in results]
+        return jsonify({
+            "status": "PASS" if len(set(t_numbers)) > 1 else "FAIL — pipeline is still returning constant T-numbers",
+            "results": results,
+        })
 
 
 # ==============================================================================
@@ -159,11 +200,6 @@ if FLASK_AVAILABLE and app:
           - wv  (optional): Water Vapor channel
           - vis (optional): Visible channel
         Also accepts JSON with base64 'image' or 'tir' for backward compatibility.
-
-        Executes:
-          1. preprocess_multichannel / preprocess_tir
-          2. full_detection (Hough eye search + Log-Polar spiral banding)
-          3. full_classify (Dvorak + EfficientNet-B0 + Grad-CAM)
         """
         current_stage = "request_parsing"
         try:
@@ -211,74 +247,103 @@ if FLASK_AVAILABLE and app:
                     "stage": "input_validation",
                 }), 400
 
-            # 3. Preprocessing Stage
+            # Stage 1: Preprocess
             current_stage = "preprocessing"
-            tir_prep = preprocess_tir(tir_bytes)
-            multichannel_tensor = preprocess_multichannel(tir_bytes, wv_bytes, vis_bytes)
+            pre = preprocess_tir(tir_bytes)
+            img_array = preprocess_multichannel(tir_bytes, wv_bytes, vis_bytes)
 
-            # 4. Cyclone Detection & Eye/Spiral Feature Extraction Stage
+            # Stage 2: Detect — PASS THE PROCESSED IMAGE (Base64)
             current_stage = "detection"
-            detection_res = full_detection(tir_bytes)
+            processed_b64 = pre["processed_image_b64"]
+            det = detect_cyclone(processed_b64)
 
-            # 5. Hybrid Dvorak + CNN Classification Stage
-            current_stage = "classification"
-            classification_res = full_classify(tir_bytes, detection_res)
+            # Stage 3: Band analysis — PASS THE ACTUAL CENTER
+            current_stage = "band_analysis"
+            center = det.get("eye_center") or det.get("circulation_center") or [112, 112]
+            band = analyze_spiral_bands(tir_bytes, tuple(center))
 
-            # 6. Update Session Cache for /api/explain
-            LAST_ANALYSIS_CACHE["heatmap_b64"] = classification_res.get("grad_cam_b64", "")
-            LAST_ANALYSIS_CACHE["predicted_class"] = classification_res.get("consensus_category", "Cyclonic Storm")
-            LAST_ANALYSIS_CACHE["confidence"] = classification_res.get("confidence", 0.85)
+            # Stage 4: Dvorak — PASS ACTUAL detection + band values
+            current_stage = "dvorak"
+            dvorak_result = classify({
+                "cdo_radius_km": det["cdo_radius_km"],
+                "banding_score": band["banding_score"],
+                "has_clear_eye": det["has_clear_eye"],
+                "eye_diameter_km": det.get("eye_diameter_km"),
+            })
+
+            # Stage 5: Predict — PASS ACTUAL dvorak wind/pressure
+            current_stage = "intensity_prediction"
+            wind_kt = dvorak_result["wind_kt"]
+            pressure = dvorak_result["pressure_hpa"]
+            forecast = predict_intensity(
+                current_wind_kt=wind_kt,
+                current_pressure=pressure,
+                lat=15.0,
+                lon=85.0,
+                storm_speed=10.0,
+            )
+
+            # Stage 6: CNN (image-based)
+            current_stage = "cnn"
+            cnn = full_classify(tir_bytes, dvorak_result)
+
+            # Update Session Cache for /api/explain
+            LAST_ANALYSIS_CACHE["heatmap_b64"] = cnn.get("grad_cam_b64", "")
+            LAST_ANALYSIS_CACHE["predicted_class"] = cnn.get("consensus_category", dvorak_result["category"])
+            LAST_ANALYSIS_CACHE["confidence"] = cnn.get("confidence", 0.85)
             LAST_ANALYSIS_CACHE["timestamp"] = datetime.now(timezone.utc).isoformat()
             LAST_ANALYSIS_CACHE["image_bytes"] = tir_bytes
 
-            # 7. Multi-Horizon Forecast Stage
-            current_stage = "intensity_prediction"
-            forecast_res = predict_intensity(
-                current_wind_kt=classification_res["wind_kt"],
-                current_pressure=classification_res["pressure_hpa"],
-                lat=16.0,
-                lon=85.0,
-            )
+            # Format forecast table
+            forecast_table = []
+            for horizon in ["now", "+12h", "+24h", "+48h", "+72h"]:
+                if horizon in forecast:
+                    f_item = forecast[horizon]
+                    trend = "up" if "+12h" in horizon or "+24h" in horizon else ("down" if "+48h" in horizon or "+72h" in horizon else "flat")
+                    forecast_table.append({
+                        "horizon": horizon.replace("now", "Now").replace("+", "+").replace("h", " hr"),
+                        "wind": f_item.get("wind_kmh", f_item.get("wind_speed_kmh", 0)),
+                        "pressure": f_item.get("pressure_hpa", 1000),
+                        "category": f_item.get("category", ""),
+                        "trend": trend,
+                    })
 
-            # Assemble comprehensive API response
+            # Assemble response
             response_payload = {
                 "status": "success",
-                "isCyclone": detection_res["cyclone_detected"],
-                "cyclone_detected": detection_res["cyclone_detected"],
-                "confidence": classification_res["confidence"],
-                "category": classification_res["consensus_category"],
-                "categoryColor": classification_res["category_color"],
-                "windSpeed": classification_res["wind_speed_kmh"],
-                "wind_kt": classification_res["wind_kt"],
-                "pressure": classification_res["pressure_hpa"],
-                "dvorakRating": classification_res["dvorak_t_number"],
-                "dvorak": classification_res["dvorak"],
-                "riskLevel": classification_res["risk_level"],
-                "riskColor": classification_res["risk_color"],
-                "cloudCoverage": tir_prep["cloud_coverage_pct"],
-                "denseCore": tir_prep["cold_core_density"],
-                "meanBrightness": tir_prep["mean_brightness"],
-                "hasEye": detection_res["has_clear_eye"],
-                "eyeCenter": detection_res["eye_center"],
-                "eyeDiameterKm": detection_res["eye_diameter_km"],
-                "cdoRadiusKm": detection_res["cdo_radius_km"],
-                "circulationCenter": detection_res["circulation_center"],
-                "bandCount": detection_res["band_count"],
-                "dominantBandAngle": detection_res["dominant_band_angle_deg"],
-                "rotationDirection": detection_res["rotation_direction"],
-                "bandingScore": detection_res["banding_score"],
-                "gradCamB64": classification_res["grad_cam_b64"],
-                "forecast": [
-                    {"horizon": "Now", "wind": forecast_res["now"]["wind_speed_kmh"], "pressure": forecast_res["now"]["pressure_hpa"], "category": forecast_res["now"]["category"], "trend": "flat"},
-                    {"horizon": "+12 hr", "wind": forecast_res["+12h"]["wind_speed_kmh"], "pressure": forecast_res["+12h"]["pressure_hpa"], "category": forecast_res["+12h"]["category"], "trend": "up"},
-                    {"horizon": "+24 hr", "wind": forecast_res["+24h"]["wind_speed_kmh"], "pressure": forecast_res["+24h"]["pressure_hpa"], "category": forecast_res["+24h"]["category"], "trend": "up"},
-                    {"horizon": "+48 hr", "wind": forecast_res["+48h"]["wind_speed_kmh"], "pressure": forecast_res["+48h"]["pressure_hpa"], "category": forecast_res["+48h"]["category"], "trend": "down"},
-                    {"horizon": "+72 hr", "wind": forecast_res["+72h"]["wind_speed_kmh"], "pressure": forecast_res["+72h"]["pressure_hpa"], "category": forecast_res["+72h"]["category"], "trend": "down"},
-                ],
-                "forecast_72h": forecast_res,
-                "forecast_details": forecast_res,
-                "dvorak_breakdown": classification_res["dvorak"],
-                "cnn_probabilities": classification_res["cnn"].get("class_probabilities", {}),
+                "preprocessing": pre,
+                "detection": det,
+                "band_analysis": band,
+                "dvorak": dvorak_result,
+                "cnn": cnn,
+                "forecast": forecast,
+                "forecast_table": forecast_table,
+                "cyclone_detected": det["cyclone_detected"],
+                # Compatibility fields for frontend
+                "isCyclone": det["cyclone_detected"],
+                "confidence": cnn.get("confidence", 0.85),
+                "category": cnn.get("consensus_category", dvorak_result["category"]),
+                "categoryColor": dvorak_result.get("category_color", "#f97316"),
+                "windSpeed": dvorak_result.get("wind_speed_kmh", int(round(dvorak_result.get("wind_kt", 45) * 1.852))),
+                "wind_kt": dvorak_result["wind_kt"],
+                "pressure": dvorak_result["pressure_hpa"],
+                "dvorakRating": dvorak_result.get("t_number", dvorak_result.get("t_number_val", 1.0)),
+                "riskLevel": dvorak_result.get("risk_level", "MODERATE"),
+                "riskColor": dvorak_result.get("risk_color", "#ef4444"),
+                "cloudCoverage": pre["cloud_coverage_pct"],
+                "denseCore": pre["cold_core_density"],
+                "meanBrightness": pre["mean_brightness"],
+                "hasEye": det["has_clear_eye"],
+                "eyeCenter": det["eye_center"],
+                "eyeDiameterKm": det["eye_diameter_km"],
+                "cdoRadiusKm": det["cdo_radius_km"],
+                "circulationCenter": det["circulation_center"],
+                "bandCount": band["band_count"],
+                "dominantBandAngle": band["dominant_band_angle_deg"],
+                "rotationDirection": band["rotation_direction"],
+                "bandingScore": band["banding_score"],
+                "gradCamB64": cnn.get("grad_cam_b64", ""),
+                "forecast_72h": forecast,
             }
 
             return jsonify(response_payload), 200

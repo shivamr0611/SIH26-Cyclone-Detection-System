@@ -149,27 +149,27 @@ def detect_cyclone(preprocessed_image_b64: str) -> Dict[str, Any]:
         )
 
     else:
-        # 5. Estimate Low-Level Circulation Center from coldest 5% pixel centroid
-        cold_threshold = np.percentile(gray, 5)
-        cold_mask = (gray <= cold_threshold).astype(np.uint8) * 255
-
-        moments = cv2.moments(cold_mask)
-        if moments["m00"] > 0:
-            cx = int(round(moments["m10"] / moments["m00"]))
-            cy = int(round(moments["m01"] / moments["m00"]))
-            circulation_center = [cx, cy]
+        # 5. When no clear eye, compute pseudo-CDO from largest contour in cold-thresholded mask
+        _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours:
+            largest = max(contours, key=cv2.contourArea)
+            area = cv2.contourArea(largest)
+            pseudo_cdo_radius_px = np.sqrt(area / np.pi)
+            moments = cv2.moments(largest)
+            if moments["m00"] > 0:
+                cx = int(round(moments["m10"] / moments["m00"]))
+                cy = int(round(moments["m01"] / moments["m00"]))
+                circulation_center = [cx, cy]
+            else:
+                circulation_center = [w // 2, h // 2]
         else:
+            pseudo_cdo_radius_px = 0.0
             circulation_center = [w // 2, h // 2]
 
-        cold_pixel_count = np.count_nonzero(cold_mask)
-        # Approximate CDO radius from equivalent circle of cold convective top area
-        approx_cdo_px = np.sqrt(cold_pixel_count / np.pi) if cold_pixel_count > 0 else 0.0
-        cdo_radius_km = round(float(approx_cdo_px * INSAT3D_KM_PER_PIXEL), 2)
-
-        # Determine detection confidence from cold core footprint
-        core_fraction = cold_pixel_count / float(gray.size)
-        cyclone_detected = bool(cold_pixel_count > 50 and core_fraction >= 0.02)
-        confidence = round(float(min(0.85, max(0.35, core_fraction * 10.0))), 2)
+        cdo_radius_km = round(float(pseudo_cdo_radius_px * INSAT3D_KM_PER_PIXEL), 2)
+        cyclone_detected = bool(cdo_radius_km > 10.0 or pseudo_cdo_radius_px > 3.0)
+        confidence = round(float(min(0.85, max(0.40, (cdo_radius_km / 300.0) * 0.85))), 2)
 
         logger.info(
             "No clear eye detected. Circulation center estimated at %s (CDO Radius: %.2f km, Conf: %.2f)",

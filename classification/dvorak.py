@@ -28,32 +28,15 @@ def compute_t_number(
     eye_diameter_km: Optional[float] = None,
 ) -> float:
     """
-    Computes Dvorak T-Number (T1.0 to T8.0) based on morphological Dvorak rules.
-
-    Rules:
-      - Start at T = 1.0
-      - If cdo_radius > 111 km: T += 0.5
-      - If cdo_radius > 222 km: T += 0.5
-      - If banding_score > 0.3: T += 0.5
-      - If banding_score > 0.6: T += 0.5
-      - If has_clear_eye: T += 1.0
-      - If eye_diameter_km < 20 km (tight convective eye): T += 0.5
-      - Cap T at 8.0 (Min 1.0)
-
-    Args:
-        cdo_radius_km: Estimated radius of Central Dense Overcast in km.
-        banding_score: Normalized spiral banding score (0.0 to 1.0).
-        has_clear_eye: Boolean indicating whether an eye is segmented.
-        eye_diameter_km: Measured eye diameter in km (if eye exists).
-
-    Returns:
-        float: Calculated Dvorak T-Number in [1.0, 8.0].
+    Computes Dvorak T-Number (T1.0 to T8.0) based on operational Dvorak rules.
     """
     t = 1.0
 
     if cdo_radius_km > 111.0:
         t += 0.5
     if cdo_radius_km > 222.0:
+        t += 0.5
+    if cdo_radius_km > 333.0:
         t += 0.5
 
     if banding_score > 0.3:
@@ -63,21 +46,13 @@ def compute_t_number(
 
     if has_clear_eye:
         t += 1.0
-        if eye_diameter_km is not None and eye_diameter_km < 20.0:
+        if eye_diameter_km and eye_diameter_km < 20.0:
             t += 0.5
 
-    # Clamp T to official range [1.0, 8.0]
-    t = float(min(8.0, max(1.0, t)))
+    t = min(t, 8.0)
     t = round(t, 1)
 
-    logger.debug(
-        "Computed Dvorak T-Number: T%.1f (cdo=%.1f km, band=%.2f, eye=%s, eye_dia=%s)",
-        t,
-        cdo_radius_km,
-        banding_score,
-        has_clear_eye,
-        eye_diameter_km,
-    )
+    print(f"[Dvorak] CDO={cdo_radius_km:.1f}km, banding={banding_score:.2f}, eye={has_clear_eye} -> T={t}")
     return t
 
 
