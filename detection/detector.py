@@ -255,9 +255,23 @@ def detect_cyclone(preprocessed_image_b64: str) -> Dict[str, Any]:
 
     # Hard Gate 1: Ocean Requirement (Tropical cyclones cannot form over continental land)
     if not is_ocean:
-        failures.append(
-            f"Circulation center is situated over continental landmass (lat: {resolved_lat:.1f}°N, lon: {resolved_lon:.1f}°E) rather than ocean waters required for tropical cyclogenesis"
-        )
+        logger.info("Early exit: Circulation center over land (lat: %.2f°N, lon: %.2f°E) - not a tropical cyclone", resolved_lat, resolved_lon)
+        return {
+            "cyclone_detected": False,
+            "confidence": 0.0,
+            "dvorak_t": 0.0,
+            "reason": f"Center over land (lat: {resolved_lat:.1f}°N, lon: {resolved_lon:.1f}°E) — not a tropical cyclone",
+            "not_detected_reason": f"Circulation center is situated over continental landmass (lat: {resolved_lat:.1f}°N, lon: {resolved_lon:.1f}°E) rather than ocean waters required for tropical cyclogenesis",
+            "vortex_concentration_score": vortex_concentration_score,
+            "has_clear_eye": False,
+            "eye_center": None,
+            "eye_diameter_km": None,
+            "cdo_radius_km": 0.0,
+            "circulation_center": circulation_center,
+            "resolved_lat": resolved_lat,
+            "resolved_lon": resolved_lon,
+            "is_ocean": False,
+        }
 
     # Hard Gate 2: Vortex Concentration Score (threshold 0.30)
     if vortex_concentration_score < 0.30:
